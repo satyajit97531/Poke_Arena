@@ -1,0 +1,6 @@
+{
+  "name": "PokéSilhouette Quiz",
+  "description": "Guess Pokémon from silhouettes, half-bodies, close-ups, cries, moves, and evolution lines across all regions and forms. Features 1v1 QR duel mode, customizable profiles, limitless trophies, and unlockable BGM.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
