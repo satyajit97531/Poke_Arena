@@ -58,15 +58,17 @@ export const AnswerOptions: React.FC<AnswerOptionsProps> = ({
   // Master mode manual submit
   const handleMasterSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!typedInput.trim() || isRevealed) return;
+    if (!typedInput.trim() || isRevealed || !correctPokemon) return;
 
     const normalized = typedInput.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-    const correctNormalized = correctPokemon.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const displayNormalized = correctPokemon.displayName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const correctNormalized = (correctPokemon.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const displayNormalized = (correctPokemon.displayName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const isMatch = normalized === correctNormalized || normalized === displayNormalized;
 
     const matchedPokemon: Pokemon = {
       ...correctPokemon,
-      name: normalized === correctNormalized || normalized === displayNormalized ? correctPokemon.name : typedInput.trim(),
+      id: isMatch ? correctPokemon.id : -99999,
+      name: isMatch ? correctPokemon.name : typedInput.trim(),
       displayName: typedInput.trim(),
     };
 

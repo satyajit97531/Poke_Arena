@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { MongoClient, Db } from 'mongodb';
@@ -65,9 +66,10 @@ async function getDb(): Promise<Db | null> {
       // collection may already not exist or is dropped
     }
 
-    // Create unique index on email
+    // Create unique index on email and username
     try {
       await db.collection('trainers').createIndex({ email: 1 }, { unique: true });
+      await db.collection('trainers').createIndex({ username: 1 }, { unique: true });
     } catch {
       // index might already exist
     }
@@ -375,10 +377,32 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     const cleanName = (displayName && String(displayName).trim()) || normalizedEmail.split('@')[0];
+    const candidateUsername = (req.body.username && String(req.body.username).trim().toLowerCase()) || cleanName.toLowerCase().replace(/\s+/g, '_');
+
+    // Ensure all usernames across the platform are strictly unique
+    if (database) {
+      const existingUser = await database.collection('trainers').findOne({
+        username: { $regex: new RegExp(`^${candidateUsername}$`, 'i') }
+      });
+      if (existingUser) {
+        return res.status(400).json({
+          error: `Username "${candidateUsername}" is already taken. Every trainer must have a unique username!`,
+        });
+      }
+    } else {
+      for (const t of inMemoryTrainers.values()) {
+        if (String(t.username || '').toLowerCase() === candidateUsername.toLowerCase()) {
+          return res.status(400).json({
+            error: `Username "${candidateUsername}" is already taken. Every trainer must have a unique username!`,
+          });
+        }
+      }
+    }
+
     const newAccount = {
       id: `trainer_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
       email: normalizedEmail,
-      username: normalizedEmail.split('@')[0],
+      username: candidateUsername,
       displayName: cleanName,
       password: String(password),
       avatarId: 25, // Pikachu by default
@@ -537,6 +561,39 @@ app.post('/api/account/sync', async (req, res) => {
     const errorMsg = err instanceof Error ? err.message : String(err);
     console.error('Error syncing account:', errorMsg);
     return res.status(500).json({ error: 'Failed to sync account.' });
+  }
+});
+
+// 5.5 Lookup Trainer by Unique Username (for Friend List Network)
+app.get('/api/trainers/by-username/:username', async (req, res) => {
+  try {
+    const rawUsername = String(req.params.username || '').trim().toLowerCase();
+    if (!rawUsername) {
+      return res.status(400).json({ error: 'Username is required' });
+    }
+
+    const database = await getDb();
+    if (database) {
+      const trainer = await database.collection('trainers').findOne(
+        { username: { $regex: new RegExp(`^${rawUsername}$`, 'i') } },
+        { projection: { password: 0, email: 0 } }
+      );
+      if (trainer) {
+        return res.json({ success: true, trainer });
+      }
+    } else {
+      for (const t of inMemoryTrainers.values()) {
+        if (String(t.username || '').toLowerCase() === rawUsername) {
+          const { password: _, email: __, ...safe } = t;
+          return res.json({ success: true, trainer: safe });
+        }
+      }
+    }
+
+    return res.status(404).json({ error: `Trainer with username "${rawUsername}" not found.` });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ error: errorMsg });
   }
 });
 
@@ -710,6 +767,557 @@ app.get('/api/highscores', async (req, res) => {
     return res.status(500).json({ error: 'Failed to fetch high scores.' });
   }
 });
+
+// =========================================================================
+// REAL-TIME 1v1 MULTIPLAYER PVP & MATCHMAKING SYSTEM
+// =========================================================================
+
+interface DuelPlayer {
+  id: string;
+  name: string;
+  avatarId: number;
+  score: number;
+  baseScore: number;
+  speedScore: number;
+  answers: boolean[];
+  times: number[];
+}
+
+interface DuelQuestion {
+  targetId: number;
+  targetName: string;
+  displayName: string;
+  types: string[];
+  species: string;
+  height: number;
+  weight: number;
+  moves: string[];
+  artwork: string;
+  options: Array<{ id: number; displayName: string; types: string[] }>;
+  correctOptionId: number;
+}
+
+interface DuelRoomState {
+  code: string;
+  host: DuelPlayer;
+  guest: DuelPlayer | null;
+  rounds: number;
+  timeLimit: number;
+  difficulty: string;
+  region: string;
+  status: 'waiting' | 'in_progress' | 'round_reveal' | 'finished';
+  questions: DuelQuestion[];
+  currentRoundIdx: number;
+  roundStartTime: number;
+  firstAnswerer: { playerId: string; playerName: string; timeTaken: number } | null;
+  roundAnswers: Record<string, {
+    playerId: string;
+    playerName: string;
+    choiceId: number;
+    isCorrect: boolean;
+    timeTaken: number;
+    timeRemaining: number;
+    pointsEarned: number;
+    speedTier: string;
+    isFirst: boolean;
+  }>;
+  lastRoundBreakdown: {
+    firstAnswerer: { playerId: string; playerName: string; timeTaken: number } | null;
+    roundIdx: number;
+    correctPokemon: { id: number; displayName: string; artwork: string; types: string[] };
+    answers: Record<string, {
+      playerName: string;
+      isCorrect: boolean;
+      timeTaken: number;
+      pointsEarned: number;
+      isFirst: boolean;
+    }>;
+  } | null;
+  createdAt: number;
+  lastActivity: number;
+}
+
+const activeDuelRooms = new Map<string, DuelRoomState>();
+const matchmakingQueue: Array<{
+  playerId: string;
+  playerName: string;
+  avatarId: number;
+  difficulty: string;
+  region: string;
+  roomCode: string;
+  queuedAt: number;
+}> = [];
+
+// Helper to get all Pokémon for question generation
+let cachedPokemonList: any[] | null = null;
+function getAllPokemonData(): any[] {
+  if (cachedPokemonList) return cachedPokemonList;
+  try {
+    const raw = fs.readFileSync(path.join(process.cwd(), 'src/data/allPokemon.json'), 'utf8');
+    cachedPokemonList = JSON.parse(raw);
+    return cachedPokemonList || [];
+  } catch (err) {
+    console.error('Failed to read allPokemon.json on server:', err);
+    return [];
+  }
+}
+
+function generateQuestionsForRoom(rounds: number, region: string): DuelQuestion[] {
+  const allPoke = getAllPokemonData();
+  let pool = allPoke;
+  if (region && region !== 'all') {
+    pool = allPoke.filter((p) => p.region === region);
+  }
+  if (!pool || pool.length < 4) pool = allPoke;
+
+  const questions: DuelQuestion[] = [];
+  const usedIds = new Set<number>();
+
+  for (let r = 0; r < rounds; r++) {
+    const available = pool.filter((p) => !usedIds.has(p.id));
+    const target = available.length > 0
+      ? available[Math.floor(Math.random() * available.length)]
+      : pool[Math.floor(Math.random() * pool.length)];
+
+    usedIds.add(target.id);
+
+    // Pick 3 decoys
+    const decoys: any[] = [];
+    const decoyPool = pool.filter((p) => p.id !== target.id);
+    const shuffledDecoys = [...decoyPool].sort(() => 0.5 - Math.random());
+    for (let i = 0; i < Math.min(3, shuffledDecoys.length); i++) {
+      decoys.push(shuffledDecoys[i]);
+    }
+
+    const allOptions = [target, ...decoys].sort(() => 0.5 - Math.random()).map((opt) => ({
+      id: opt.id,
+      displayName: opt.displayName,
+      types: opt.types || ['normal'],
+    }));
+
+    questions.push({
+      targetId: target.id,
+      targetName: target.name,
+      displayName: target.displayName,
+      types: target.types || ['normal'],
+      species: target.species || 'Pokémon',
+      height: target.height || 10,
+      weight: target.weight || 100,
+      moves: target.moves || ['Tackle', 'Quick Attack'],
+      artwork: `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${target.id}.png`,
+      options: allOptions,
+      correctOptionId: target.id,
+    });
+  }
+
+  return questions;
+}
+
+// 1. Create Room (Private / Host)
+app.post('/api/duel/create', (req, res) => {
+  try {
+    const { playerName, avatarId, rounds = 5, timeLimit = 15, difficulty = 'easy', region = 'all' } = req.body;
+    const playerId = `p1_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const roomCode = `PKMN-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const questions = generateQuestionsForRoom(Number(rounds) || 5, region);
+
+    const room: DuelRoomState = {
+      code: roomCode,
+      host: {
+        id: playerId,
+        name: playerName || 'Trainer 1',
+        avatarId: Number(avatarId) || 25,
+        score: 0,
+        baseScore: 0,
+        speedScore: 0,
+        answers: [],
+        times: [],
+      },
+      guest: null,
+      rounds: Number(rounds) || 5,
+      timeLimit: Number(timeLimit) || 15,
+      difficulty: difficulty || 'easy',
+      region: region || 'all',
+      status: 'waiting',
+      questions,
+      currentRoundIdx: 0,
+      roundStartTime: 0,
+      firstAnswerer: null,
+      roundAnswers: {},
+      lastRoundBreakdown: null,
+      createdAt: Date.now(),
+      lastActivity: Date.now(),
+    };
+
+    activeDuelRooms.set(roomCode, room);
+
+    return res.json({
+      success: true,
+      roomCode,
+      playerId,
+      room,
+    });
+  } catch (err) {
+    console.error('Error creating duel room:', err);
+    return res.status(500).json({ error: 'Failed to create room.' });
+  }
+});
+
+// 2. Join Room (via Room Code or QR Code URL)
+app.post('/api/duel/join', (req, res) => {
+  try {
+    const { roomCode, playerName, avatarId } = req.body;
+    if (!roomCode) return res.status(400).json({ error: 'Room code is required.' });
+
+    const normalizedCode = String(roomCode).trim().toUpperCase();
+    const room = activeDuelRooms.get(normalizedCode);
+
+    if (!room) {
+      return res.status(404).json({ error: `Room ${normalizedCode} not found or expired.` });
+    }
+
+    if (room.guest && room.status !== 'waiting') {
+      return res.status(400).json({ error: 'This duel room is already full and active!' });
+    }
+
+    const playerId = `p2_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    room.guest = {
+      id: playerId,
+      name: playerName || 'Challenger',
+      avatarId: Number(avatarId) || 6,
+      score: 0,
+      baseScore: 0,
+      speedScore: 0,
+      answers: [],
+      times: [],
+    };
+
+    room.status = 'in_progress';
+    room.currentRoundIdx = 0;
+    room.roundStartTime = Date.now();
+    room.roundAnswers = {};
+    room.firstAnswerer = null;
+    room.lastActivity = Date.now();
+
+    return res.json({
+      success: true,
+      roomCode: room.code,
+      playerId,
+      room,
+    });
+  } catch (err) {
+    console.error('Error joining duel room:', err);
+    return res.status(500).json({ error: 'Failed to join room.' });
+  }
+});
+
+// 3. Matchmaking: Random Play with online trainers
+app.post('/api/duel/random-match', (req, res) => {
+  try {
+    const { playerName, avatarId, difficulty = 'easy', region = 'all' } = req.body;
+    const now = Date.now();
+    const playerId = `rand_${now}_${Math.random().toString(36).slice(2, 6)}`;
+
+    // Clean up expired queue items (>40s)
+    const validQueue = matchmakingQueue.filter((q) => now - q.queuedAt < 40000);
+    matchmakingQueue.length = 0;
+    matchmakingQueue.push(...validQueue);
+
+    // Look for a waiting player
+    const waitingOpponentIndex = matchmakingQueue.findIndex((q) => q.playerId !== playerId);
+
+    if (waitingOpponentIndex !== -1) {
+      const waitingOpponent = matchmakingQueue.splice(waitingOpponentIndex, 1)[0];
+      const room = activeDuelRooms.get(waitingOpponent.roomCode);
+
+      if (room && !room.guest) {
+        room.guest = {
+          id: playerId,
+          name: playerName || 'Rival Trainer',
+          avatarId: Number(avatarId) || 150,
+          score: 0,
+          baseScore: 0,
+          speedScore: 0,
+          answers: [],
+          times: [],
+        };
+        room.status = 'in_progress';
+        room.currentRoundIdx = 0;
+        room.roundStartTime = Date.now();
+        room.roundAnswers = {};
+        room.firstAnswerer = null;
+        room.lastActivity = Date.now();
+
+        return res.json({
+          success: true,
+          matched: true,
+          roomCode: room.code,
+          playerId,
+          room,
+        });
+      }
+    }
+
+    // No waiting player found: create new room and wait in queue
+    const roomCode = `RAND-${Math.floor(1000 + Math.random() * 9000)}`;
+    const questions = generateQuestionsForRoom(5, region);
+
+    const room: DuelRoomState = {
+      code: roomCode,
+      host: {
+        id: playerId,
+        name: playerName || 'Trainer',
+        avatarId: Number(avatarId) || 25,
+        score: 0,
+        baseScore: 0,
+        speedScore: 0,
+        answers: [],
+        times: [],
+      },
+      guest: null,
+      rounds: 5,
+      timeLimit: 15,
+      difficulty,
+      region,
+      status: 'waiting',
+      questions,
+      currentRoundIdx: 0,
+      roundStartTime: 0,
+      firstAnswerer: null,
+      roundAnswers: {},
+      lastRoundBreakdown: null,
+      createdAt: now,
+      lastActivity: now,
+    };
+
+    activeDuelRooms.set(roomCode, room);
+    matchmakingQueue.push({
+      playerId,
+      playerName: playerName || 'Trainer',
+      avatarId: Number(avatarId) || 25,
+      difficulty,
+      region,
+      roomCode,
+      queuedAt: now,
+    });
+
+    return res.json({
+      success: true,
+      matched: false,
+      waiting: true,
+      roomCode,
+      playerId,
+      room,
+    });
+  } catch (err) {
+    console.error('Error in random matchmaking:', err);
+    return res.status(500).json({ error: 'Matchmaking failed.' });
+  }
+});
+
+// 4. Poll Room State (Real-time synchronization for both devices)
+app.get('/api/duel/room/:code', (req, res) => {
+  try {
+    const normalizedCode = String(req.params.code).trim().toUpperCase();
+    const room = activeDuelRooms.get(normalizedCode);
+    if (!room) {
+      return res.status(404).json({ error: 'Duel room not found.' });
+    }
+
+    room.lastActivity = Date.now();
+
+    // Auto-advance if round_reveal has elapsed 3.5 seconds
+    if (room.status === 'round_reveal') {
+      const revealDuration = Date.now() - (room.roundStartTime || 0);
+      if (revealDuration > 3500) {
+        if (room.currentRoundIdx + 1 >= room.rounds) {
+          room.status = 'finished';
+        } else {
+          room.currentRoundIdx += 1;
+          room.status = 'in_progress';
+          room.roundStartTime = Date.now();
+          room.roundAnswers = {};
+          room.firstAnswerer = null;
+        }
+      }
+    }
+
+    // Auto-timeout if round in progress exceeds timeLimit + 3 seconds grace period
+    if (room.status === 'in_progress' && room.roundStartTime > 0) {
+      const elapsedSec = (Date.now() - room.roundStartTime) / 1000;
+      if (elapsedSec > room.timeLimit + 2) {
+        // Force reveal if time ran out
+        const curQ = room.questions[room.currentRoundIdx];
+        room.status = 'round_reveal';
+        room.roundStartTime = Date.now();
+        room.lastRoundBreakdown = {
+          firstAnswerer: room.firstAnswerer,
+          roundIdx: room.currentRoundIdx,
+          correctPokemon: {
+            id: curQ.targetId,
+            displayName: curQ.displayName,
+            artwork: curQ.artwork,
+            types: curQ.types,
+          },
+          answers: { ...room.roundAnswers },
+        };
+      }
+    }
+
+    return res.json({
+      success: true,
+      room,
+    });
+  } catch (err) {
+    console.error('Error getting duel room:', err);
+    return res.status(500).json({ error: 'Failed to retrieve room.' });
+  }
+});
+
+// 5. Submit Answer for Current Round
+app.post('/api/duel/room/:code/answer', (req, res) => {
+  try {
+    const normalizedCode = String(req.params.code).trim().toUpperCase();
+    const room = activeDuelRooms.get(normalizedCode);
+    if (!room) {
+      return res.status(404).json({ error: 'Duel room not found.' });
+    }
+
+    const { playerId, playerName, choiceId, timeRemaining, timeTaken } = req.body;
+    if (room.status !== 'in_progress') {
+      return res.json({ success: false, message: 'Round is not in progress.', room });
+    }
+
+    const curQ = room.questions[room.currentRoundIdx];
+    if (!curQ) {
+      return res.status(400).json({ error: 'Invalid round index.' });
+    }
+
+    // Check if player already answered this round
+    if (room.roundAnswers[playerId]) {
+      return res.json({ success: true, alreadyAnswered: true, room });
+    }
+
+    const isCorrect = Number(choiceId) === curQ.correctOptionId;
+    const isFirst = !room.firstAnswerer;
+
+    if (isFirst) {
+      room.firstAnswerer = {
+        playerId,
+        playerName: playerName || 'Trainer',
+        timeTaken: Math.max(0.1, Number(timeTaken) || 0.1),
+      };
+    }
+
+    // Points calculation
+    const basePoints = isCorrect ? (room.difficulty === 'hard' ? 250 : room.difficulty === 'medium' ? 180 : 120) : 0;
+    const speedBonus = isCorrect ? Math.round(Math.max(0, Number(timeRemaining) || 0) * (room.difficulty === 'hard' ? 25 : 18)) : 0;
+    const firstBonus = isCorrect && isFirst ? 150 : 0; // Quick Reflex bonus for answering first!
+    const totalPoints = basePoints + speedBonus + firstBonus;
+
+    let speedTier = 'none';
+    if (timeTaken <= 2.0) speedTier = 'instant';
+    else if (timeTaken <= 4.0) speedTier = 'fast';
+    else if (timeTaken <= 8.0) speedTier = 'moderate';
+    else speedTier = 'slow';
+
+    room.roundAnswers[playerId] = {
+      playerId,
+      playerName: playerName || 'Trainer',
+      choiceId: Number(choiceId),
+      isCorrect,
+      timeTaken: Number(timeTaken) || 0,
+      timeRemaining: Number(timeRemaining) || 0,
+      pointsEarned: totalPoints,
+      speedTier,
+      isFirst,
+    };
+
+    // Update player's aggregate score
+    if (room.host.id === playerId) {
+      room.host.score += totalPoints;
+      room.host.baseScore += basePoints;
+      room.host.speedScore += (speedBonus + firstBonus);
+      room.host.answers.push(isCorrect);
+      room.host.times.push(Number(timeTaken) || 0);
+    } else if (room.guest && room.guest.id === playerId) {
+      room.guest.score += totalPoints;
+      room.guest.baseScore += basePoints;
+      room.guest.speedScore += (speedBonus + firstBonus);
+      room.guest.answers.push(isCorrect);
+      room.guest.times.push(Number(timeTaken) || 0);
+    }
+
+    // Check if both players have answered
+    const bothAnswered = room.guest && !!room.roundAnswers[room.host.id] && !!room.roundAnswers[room.guest.id];
+
+    if (bothAnswered) {
+      room.status = 'round_reveal';
+      room.roundStartTime = Date.now(); // used for reveal duration timer
+      room.lastRoundBreakdown = {
+        firstAnswerer: room.firstAnswerer,
+        roundIdx: room.currentRoundIdx,
+        correctPokemon: {
+          id: curQ.targetId,
+          displayName: curQ.displayName,
+          artwork: curQ.artwork,
+          types: curQ.types,
+        },
+        answers: { ...room.roundAnswers },
+      };
+    }
+
+    room.lastActivity = Date.now();
+    return res.json({
+      success: true,
+      isCorrect,
+      isFirst,
+      pointsEarned: totalPoints,
+      bothAnswered,
+      room,
+    });
+  } catch (err) {
+    console.error('Error submitting duel answer:', err);
+    return res.status(500).json({ error: 'Failed to record answer.' });
+  }
+});
+
+// 6. Manual next round trigger (or forced advance)
+app.post('/api/duel/room/:code/next', (req, res) => {
+  try {
+    const normalizedCode = String(req.params.code).trim().toUpperCase();
+    const room = activeDuelRooms.get(normalizedCode);
+    if (!room) return res.status(404).json({ error: 'Room not found.' });
+
+    if (room.currentRoundIdx + 1 >= room.rounds) {
+      room.status = 'finished';
+    } else {
+      room.currentRoundIdx += 1;
+      room.status = 'in_progress';
+      room.roundStartTime = Date.now();
+      room.roundAnswers = {};
+      room.firstAnswerer = null;
+    }
+
+    return res.json({ success: true, room });
+  } catch (err) {
+    console.error('Error advancing duel round:', err);
+    return res.status(500).json({ error: 'Failed to advance.' });
+  }
+});
+
+// 7. Leave / Cancel Room
+app.post('/api/duel/room/:code/leave', (req, res) => {
+  try {
+    const normalizedCode = String(req.params.code).trim().toUpperCase();
+    activeDuelRooms.delete(normalizedCode);
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to leave.' });
+  }
+});
+
 
 // Vite middleware setup
 async function startServer() {

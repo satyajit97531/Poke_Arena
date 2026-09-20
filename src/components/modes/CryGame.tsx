@@ -63,6 +63,8 @@ export const CryGame: React.FC<CryGameProps> = ({
     };
   }, [isStarted]);
 
+  const handleSelectAnswerRef = useRef<(poke: Pokemon | null) => void>(() => {});
+
   // Timer Tick
   useEffect(() => {
     if (!isStarted || isAnswered) {
@@ -72,12 +74,15 @@ export const CryGame: React.FC<CryGameProps> = ({
 
     timerRef.current = setInterval(() => {
       setTimeLeft((prev) => {
-        if (prev <= 0.1) {
+        const next = Math.max(0, parseFloat((prev - 0.1).toFixed(1)));
+        if (next <= 0) {
           clearInterval(timerRef.current!);
-          handleSelectAnswer(null); // Time out
+          setTimeout(() => {
+            handleSelectAnswerRef.current(null); // Time out
+          }, 0);
           return 0;
         }
-        return Math.max(0, prev - 0.1);
+        return next;
       });
     }, 100);
 
@@ -116,6 +121,8 @@ export const CryGame: React.FC<CryGameProps> = ({
       onScoreEarned(0, false, 0);
     }
   };
+
+  handleSelectAnswerRef.current = handleSelectAnswer;
 
   const timePct = (timeLeft / maxTime) * 100;
 

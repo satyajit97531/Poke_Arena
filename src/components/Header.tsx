@@ -1,20 +1,22 @@
 import React from 'react';
-import { Volume2, VolumeX, Trophy, BarChart2, Flame, Sparkles, Music, User, Database } from 'lucide-react';
+import { Volume2, VolumeX, Trophy, BarChart2, Sparkles, Music, User, Coins, ShoppingBag } from 'lucide-react';
 import { MainGameMode, RegionId, TrainerAccount } from '../types/pokemon';
 import { REGIONS } from '../utils/pokemonTypes';
-import { OFFICIAL_ARTWORK_URL } from '../data/pokemonData';
+import { getAccountAvatarUrl } from '../data/trainerAvatars';
 import { sound } from '../utils/audio';
 
 interface HeaderProps {
-  score: number;
-  streak: number;
-  multiplier: number;
+  score?: number;
+  streak?: number;
+  multiplier?: number;
   mode: MainGameMode;
   region: RegionId;
   account: TrainerAccount;
   isMuted: boolean;
   onToggleMute: () => void;
   onOpenProfile: () => void;
+  onOpenTrophyRoad?: () => void;
+  onOpenShop?: () => void;
   onOpenJukebox: () => void;
   onOpenScoreboard: () => void;
   onChangeMode: (mode: MainGameMode) => void;
@@ -22,19 +24,20 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  score,
-  streak,
-  multiplier,
   mode,
   region,
   account,
   isMuted,
   onToggleMute,
   onOpenProfile,
+  onOpenTrophyRoad,
+  onOpenShop,
   onOpenJukebox,
   onOpenScoreboard,
 }) => {
   const currentRegion = REGIONS.find((r) => r.id === region) || REGIONS[0];
+  const battleTokens = account.battleTokens ?? 0;
+  const avatarUrl = getAccountAvatarUrl(account);
 
   return (
     <header className="w-full border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md sticky top-0 z-40 px-3 sm:px-6 py-2.5">
@@ -61,8 +64,12 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
               <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
                 <span className="capitalize text-slate-300 font-medium">{mode} Mode</span>
-                <span>•</span>
-                <span className="text-cyan-400 font-medium">{currentRegion.name}</span>
+                {(mode === 'classic' || mode === 'silhouette') && (
+                  <>
+                    <span>•</span>
+                    <span className="text-cyan-400 font-medium">{currentRegion.name}</span>
+                  </>
+                )}
               </p>
             </div>
           </div>
@@ -76,7 +83,7 @@ export const Header: React.FC<HeaderProps> = ({
             className="flex md:hidden items-center gap-1.5 p-1 rounded-full bg-slate-900 border border-slate-800"
           >
             <img
-              src={OFFICIAL_ARTWORK_URL(account.avatarId)}
+              src={avatarUrl}
               alt="Trainer Avatar"
               className="w-7 h-7 rounded-full object-contain bg-slate-950 p-0.5"
             />
@@ -84,31 +91,40 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         </div>
 
-        {/* Center: Live Score & Streak Pill */}
-        <div className="hidden md:flex items-center gap-4 bg-slate-900/90 border border-slate-800 rounded-full px-4 py-1.5 shadow-inner">
-          <div className="flex items-center gap-2 pr-3 border-r border-slate-800">
-            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Score</span>
-            <span className="text-base font-bold font-display text-amber-400 tracking-wide">
-              {score.toLocaleString()}
+        {/* Center: Battle Tokens & Direct Poké Mart Quick Launch */}
+        <div className="hidden md:flex items-center gap-3 bg-slate-900/90 border border-slate-800 rounded-full px-4 py-1.5 shadow-inner">
+          {/* Battle Tokens Currency */}
+          <div
+            className="flex items-center gap-2 cursor-pointer group"
+            onClick={onOpenShop || onOpenProfile}
+            title="Battle Tokens (Spend in Poké Mart!)"
+          >
+            <div className="w-4 h-4 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+              <Coins className="w-2.5 h-2.5 text-amber-400" />
+            </div>
+            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Tokens:</span>
+            <span className="text-xs font-bold font-mono text-amber-300 group-hover:text-amber-200 transition-colors">
+              {battleTokens.toLocaleString()} BT
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className={`flex items-center gap-1 text-xs font-bold ${streak >= 3 ? 'text-orange-400 animate-pulse' : 'text-slate-300'}`}>
-              <Flame className={`w-3.5 h-3.5 ${streak >= 5 ? 'text-red-500 fill-red-500' : 'text-orange-400'}`} />
-              <span>{streak} Streak</span>
-            </div>
-            {multiplier > 1 && (
-              <span className="text-[10px] font-black px-1.5 py-0.2 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 text-white shadow-sm">
-                {multiplier}x
-              </span>
-            )}
-          </div>
+          <span className="text-slate-700">|</span>
+
+          {/* Quick Poké Mart Shortcut */}
+          <button
+            type="button"
+            onClick={onOpenShop || onOpenProfile}
+            className="flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 font-bold transition-colors cursor-pointer"
+            title="Open Poké Mart"
+          >
+            <ShoppingBag className="w-3.5 h-3.5" />
+            <span>Poké Mart</span>
+          </button>
         </div>
 
         {/* Right Tools: Profile Avatar, Limitless Trophies, Jukebox BGM, Leaderboards */}
         <div className="flex items-center justify-between w-full md:w-auto gap-2">
-          {/* Trainer Profile Card (Replaces New Game button with customizable profile & saved account) */}
+          {/* Trainer Profile Card */}
           <button
             id="header-btn-trainer-profile"
             onClick={() => {
@@ -116,11 +132,11 @@ export const Header: React.FC<HeaderProps> = ({
               onOpenProfile();
             }}
             className="flex items-center gap-2 py-1 pl-1 pr-2.5 rounded-full bg-slate-900 hover:bg-slate-800 border border-slate-700/80 transition-all hover:scale-105 active:scale-95 text-left group"
-            title="Trainer Profile & Accounts"
+            title="Trainer Profile, Shop & Badges"
           >
-            <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-rose-500 to-amber-500 p-0.5 shadow-sm">
+            <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-rose-500 to-amber-500 p-0.5 shadow-sm overflow-hidden flex items-center justify-center">
               <img
-                src={OFFICIAL_ARTWORK_URL(account.avatarId)}
+                src={avatarUrl}
                 alt="Avatar"
                 className="w-full h-full rounded-full object-contain bg-slate-950 p-0.5"
               />
@@ -133,22 +149,23 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="text-[9px] px-1 rounded bg-rose-500/20 text-rose-300 font-bold">
                   Lv.{account.level}
                 </span>
-                {account.email && (
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title={`MongoDB Atlas: ${account.email}`} />
-                )}
               </div>
             </div>
           </button>
 
-          {/* Limitless Trophy Progression Button */}
+          {/* Limitless Trophy Progression Button - Redirects to Trophy Road */}
           <button
             id="header-btn-trophies"
             onClick={() => {
               sound.playButtonPress();
-              onOpenProfile();
+              if (onOpenTrophyRoad) {
+                onOpenTrophyRoad();
+              } else {
+                onOpenProfile();
+              }
             }}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold transition-all hover:scale-105 active:scale-95"
-            title="Trophy Points (Limitless Progression)"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer"
+            title="Click to redirect to 100 Lakh Trophy Road!"
           >
             <Trophy className="w-3.5 h-3.5 text-amber-400" />
             <span className="font-mono font-bold">{account.trophyPoints.toLocaleString()}</span>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import confetti from 'canvas-confetti';
-import { Target, Crown, Play, Sparkles, Clock, Flame } from 'lucide-react';
+import { Target, Crown, Play, Sparkles, Clock, Flame, Zap } from 'lucide-react';
 import { Header } from './components/Header';
 import { SilhouetteStage } from './components/SilhouetteStage';
 import { AnswerOptions } from './components/AnswerOptions';
@@ -19,6 +19,7 @@ import { MoveGame } from './components/modes/MoveGame';
 import { RegionGame } from './components/modes/RegionGame';
 import { TypeGame } from './components/modes/TypeGame';
 import { Duel1v1Game } from './components/modes/Duel1v1Game';
+import { BattlePredictorGame } from './components/modes/BattlePredictorGame';
 
 import {
   DifficultyMode,
@@ -39,6 +40,7 @@ import {
 } from './utils/storage';
 import { getActiveAccount, saveActiveAccount, evaluateAchievements, createDefaultAccount } from './utils/accounts';
 import { sound } from './utils/audio';
+import { checkAndUpdateDailyStreak } from './utils/dailyStreak';
 
 export default function App() {
   // Active Account State (Supports multiple accounts, customizable avatar, achievements, level & limitless trophies)
@@ -88,6 +90,32 @@ export default function App() {
     sound.setBGMTrack(account.activeSongId || 'pallet_town');
   }, [account.activeSongId]);
 
+  // Daily Streak 24h IST cycle check on session start
+  useEffect(() => {
+    const { updatedAccount, isNewDay } = checkAndUpdateDailyStreak(account);
+    if (isNewDay) {
+      saveActiveAccount(updatedAccount);
+      setAccount(updatedAccount);
+    }
+
+    // Auto-route to 1v1 duel if opened via QR code or invite link (?duelRoom=XYZ)
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('duelRoom')) {
+      setMode('1v1');
+    }
+  }, []);
+
+  const handleTokensEarned = (amount: number) => {
+    setAccount((prev) => {
+      const next = {
+        ...prev,
+        battleTokens: (prev.battleTokens || 0) + amount,
+      };
+      saveActiveAccount(next);
+      return next;
+    });
+  };
+
   // Confetti helper
   const triggerConfetti = useCallback(() => {
     try {
@@ -109,6 +137,7 @@ export default function App() {
     setLastPointsEarned(0);
 
     const nextQ = generateQuestion(region, excludeIdsRef.current, difficulty, mode);
+    if (!nextQ || !nextQ.pokemon) return;
     excludeIdsRef.current.add(nextQ.pokemon.id);
     setCurrentQuestion(nextQ);
 
@@ -202,7 +231,7 @@ export default function App() {
 
   // Answer Selected in Silhouette Stage
   const handleSelectAnswer = useCallback((selectedOpt: Pokemon) => {
-    if (!currentQuestion || isRevealed) return;
+    if (!currentQuestion || !currentQuestion.pokemon || !selectedOpt || isRevealed) return;
     if (timerRef.current) clearInterval(timerRef.current);
 
     const isCorrect = selectedOpt.id === currentQuestion.pokemon.id;
@@ -280,6 +309,8 @@ export default function App() {
       timeRemaining: timeLeft,
       gameMode: mode,
       pokemonTypes: currentQuestion.pokemon.types,
+      difficulty,
+      pointsScored: points,
     });
 
     if (isCorrect) {
@@ -396,8 +427,8 @@ export default function App() {
     if (timerRef.current) clearInterval(timerRef.current);
     // Clear all mode start states
     setStartedModes({});
-    // Reset question state if switching to silhouette or legendary so it starts fresh upon pressing Start
-    if (newMode === 'classic' || newMode === 'legendary') {
+    // Reset question state if switching to silhouette, legendary, or blitz so it starts fresh upon pressing Start
+    if (newMode === 'classic' || newMode === 'legendary' || newMode === 'blitz') {
       setCurrentQuestion(null);
       setIsRevealed(false);
       setSelectedAnswer(null);
@@ -417,11 +448,11 @@ export default function App() {
   useEffect(() => {
     setStartedModes({});
     if (timerRef.current) clearInterval(timerRef.current);
-    if (mode === 'classic' || mode === 'legendary') {
+    if (mode === 'classic' || mode === 'legendary' || mode === 'blitz') {
       setCurrentQuestion(null);
       setIsRevealed(false);
       setSelectedAnswer(null);
-    } else if (mode === 'survival' || mode === 'blitz' || mode === 'zen') {
+    } else if (mode === 'survival' || mode === 'zen') {
       handleResetGame();
     }
   }, [mode, handleResetGame]);
@@ -429,7 +460,7 @@ export default function App() {
   // Timer Tick Engine
   useEffect(() => {
     const isSilhouetteMode = mode === 'classic' || mode === 'legendary' || mode === 'survival' || mode === 'blitz';
-    const isModeStarted = (mode === 'classic' || mode === 'legendary') ? Boolean(startedModes[mode]) : true;
+    const isModeStarted = (mode === 'classic' || mode === 'legendary' || mode === 'blitz') ? Boolean(startedModes[mode]) : true;
     if (!isSilhouetteMode || isRevealed || !isModeStarted) {
       if (timerRef.current) clearInterval(timerRef.current);
       return;
@@ -457,7 +488,9 @@ export default function App() {
           }
           if (next <= 0) {
             if (timerRef.current) clearInterval(timerRef.current);
-            handleTimeOut();
+            setTimeout(() => {
+              handleTimeOut();
+            }, 0);
             return 0;
           }
           return next;
@@ -474,7 +507,7 @@ export default function App() {
   useEffect(() => {
     const isSilhouetteMode = mode === 'classic' || mode === 'legendary' || mode === 'survival' || mode === 'blitz' || mode === 'zen';
     if (isSilhouetteMode) {
-      const isRequiresStart = mode === 'classic' || mode === 'legendary';
+      const isRequiresStart = mode === 'classic' || mode === 'legendary' || mode === 'blitz';
       if (!isRequiresStart || startedModes[mode]) {
         handleResetGame();
       }
@@ -516,12 +549,14 @@ export default function App() {
   // Sub-game mode points handler
   const handleSubGameScore = (points: number, isPerfect: boolean = true) => {
     setScore((prev) => prev + points);
-    const updated = { ...account };
-    updated.trophyPoints += Math.round(points / 10);
-    updated.totalScore += points;
-    if (isPerfect) updated.totalCorrect += 1;
-    saveActiveAccount(updated);
-    setAccount(updated);
+    setAccount((prevAccount) => {
+      const updated = { ...prevAccount };
+      updated.trophyPoints += Math.round(points / 10);
+      updated.totalScore += points;
+      if (isPerfect) updated.totalCorrect += 1;
+      saveActiveAccount(updated);
+      return updated;
+    });
   };
 
   // Change BGM Track
@@ -593,20 +628,20 @@ export default function App() {
           />
         )}
 
-        {/* 1. SILHOUETTE & LEGENDARY ARENA MODES */}
+        {/* 1. SILHOUETTE, LEGENDARY ARENA & BLITZ MODES */}
         {isSilhouetteMode && (
-          (mode === 'classic' || mode === 'legendary') && !startedModes[mode] ? (
+          (mode === 'classic' || mode === 'legendary' || mode === 'blitz') && !startedModes[mode] ? (
             <div className="w-full max-w-xl mx-auto flex flex-col items-center my-auto py-4">
               <div className="w-full bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center relative overflow-hidden">
                 {/* Glow backdrop */}
                 <div
                   className={`absolute -top-24 -right-24 w-60 h-60 rounded-full blur-3xl pointer-events-none ${
-                    mode === 'legendary' ? 'bg-amber-500/10' : 'bg-rose-500/10'
+                    mode === 'legendary' ? 'bg-amber-500/10' : mode === 'blitz' ? 'bg-yellow-500/15' : 'bg-rose-500/10'
                   }`}
                 />
                 <div
                   className={`absolute -bottom-24 -left-24 w-60 h-60 rounded-full blur-3xl pointer-events-none ${
-                    mode === 'legendary' ? 'bg-purple-500/10' : 'bg-cyan-500/10'
+                    mode === 'legendary' ? 'bg-purple-500/10' : mode === 'blitz' ? 'bg-orange-500/15' : 'bg-cyan-500/10'
                   }`}
                 />
 
@@ -614,11 +649,15 @@ export default function App() {
                   className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-xl relative z-10 ${
                     mode === 'legendary'
                       ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40 shadow-amber-950/60'
+                      : mode === 'blitz'
+                      ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/40 shadow-yellow-950/60'
                       : 'bg-rose-500/20 text-rose-400 border border-rose-500/40 shadow-rose-950/60'
                   }`}
                 >
                   {mode === 'legendary' ? (
                     <Crown className="w-8 h-8" />
+                  ) : mode === 'blitz' ? (
+                    <Zap className="w-8 h-8 fill-yellow-400" />
                   ) : (
                     <Target className="w-8 h-8" />
                   )}
@@ -628,21 +667,31 @@ export default function App() {
                   className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-2 relative z-10 ${
                     mode === 'legendary'
                       ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      : mode === 'blitz'
+                      ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30'
                       : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
                   }`}
                 >
                   {mode === 'legendary'
                     ? 'Rare Encounters • 2x Trophy Boost'
+                    : mode === 'blitz'
+                    ? '60-Second Challenge • Non-Stop Clock'
                     : 'Unlimited Rounds • Endless Streak'}
                 </span>
 
                 <h3 className="text-2xl sm:text-3xl font-black font-display text-white mb-2 relative z-10">
-                  {mode === 'legendary' ? 'Legendary & Mythical Arena' : "Who's That Pokémon?"}
+                  {mode === 'legendary'
+                    ? 'Legendary & Mythical Arena'
+                    : mode === 'blitz'
+                    ? 'Blitz Speed Run (60s)'
+                    : "Who's That Pokémon?"}
                 </h3>
 
                 <p className="text-xs sm:text-sm text-slate-300 max-w-md mb-6 leading-relaxed relative z-10">
                   {mode === 'legendary'
                     ? 'Face off exclusively against Legendary, Mythical, and Ultra Beast Pokémon from across all 9 generations. Test your knowledge against the rarest silhouettes in the franchise!'
+                    : mode === 'blitz'
+                    ? 'Can you identify Pokémon at hyper-speed? You have 60 continuous seconds to answer as many Pokémon as possible without stopping. Speed and accuracy build record high scores!'
                     : 'Can you recognize Pokémon exclusively from their mystery shadow? Answer before the 15-second timer runs out to build multiplier streaks and earn limitless trophies!'}
                 </p>
 
@@ -650,8 +699,12 @@ export default function App() {
                 <div className="grid grid-cols-3 gap-2 w-full max-w-sm mb-6 relative z-10">
                   <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-center">
                     <Clock className="w-4 h-4 mx-auto text-amber-400 mb-1" />
-                    <span className="text-[11px] font-bold text-slate-300 block">15 Seconds</span>
-                    <span className="text-[9px] text-slate-500">Per Shadow</span>
+                    <span className="text-[11px] font-bold text-slate-300 block">
+                      {mode === 'blitz' ? '60 Seconds' : '15 Seconds'}
+                    </span>
+                    <span className="text-[9px] text-slate-500">
+                      {mode === 'blitz' ? 'Total Clock' : 'Per Shadow'}
+                    </span>
                   </div>
                   <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-center">
                     <Flame className="w-4 h-4 mx-auto text-rose-400 mb-1" />
@@ -664,30 +717,38 @@ export default function App() {
                       {mode === 'legendary' ? 'Legendary Only' : 'Gen 1 - 9'}
                     </span>
                     <span className="text-[9px] text-slate-500">
-                      {mode === 'legendary' ? 'Rare Titans' : '+ Regional Forms'}
+                      {mode === 'legendary' ? 'Rare Titans' : mode === 'blitz' ? 'Rapid Fire Queue' : '+ Regional Forms'}
                     </span>
                   </div>
                 </div>
 
                 <button
-                  id={mode === 'legendary' ? 'btn-start-legendary-game' : 'btn-start-silhouette-game'}
+                  id={mode === 'legendary' ? 'btn-start-legendary-game' : mode === 'blitz' ? 'btn-start-blitz-game' : 'btn-start-silhouette-game'}
                   type="button"
                   onClick={() => handleStartMode(mode)}
                   className={`py-3.5 px-8 rounded-2xl text-white font-display font-black text-sm uppercase tracking-wider shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2.5 cursor-pointer relative z-10 ${
                     mode === 'legendary'
                       ? 'bg-gradient-to-r from-amber-500 via-yellow-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 shadow-amber-950/60'
+                      : mode === 'blitz'
+                      ? 'bg-gradient-to-r from-yellow-500 via-amber-500 to-orange-600 hover:from-yellow-400 hover:to-orange-500 shadow-yellow-950/60'
                       : 'bg-gradient-to-r from-rose-500 via-red-500 to-pink-600 hover:from-rose-400 hover:to-pink-500 shadow-rose-950/60'
                   }`}
                 >
                   <Play className="w-4 h-4 fill-white" />
-                  <span>{mode === 'legendary' ? 'Enter Legendary Arena' : 'Start Silhouette Challenge'}</span>
+                  <span>
+                    {mode === 'legendary'
+                      ? 'Enter Legendary Arena'
+                      : mode === 'blitz'
+                      ? 'Start 60s Blitz Run'
+                      : 'Start Silhouette Challenge'}
+                  </span>
                 </button>
               </div>
             </div>
           ) : (
             currentQuestion && (
               <div className="w-full flex flex-col items-center my-auto">
-                {(mode === 'classic' || mode === 'legendary') && (
+                {(mode === 'classic' || mode === 'legendary' || mode === 'blitz') && (
                   <div className="w-full max-w-xl flex items-center justify-between px-2 mb-2">
                     <button
                       id="btn-return-to-start-screen"
@@ -702,7 +763,11 @@ export default function App() {
                       ← Exit to Start Screen
                     </button>
                     <span className="text-[11px] text-slate-500 font-mono">
-                      {mode === 'legendary' ? 'Legendary & Mythical Arena' : 'Silhouette Challenge'}
+                      {mode === 'legendary'
+                        ? 'Legendary & Mythical Arena'
+                        : mode === 'blitz'
+                        ? 'Blitz Speed Run (60s)'
+                        : 'Silhouette Challenge'}
                     </span>
                   </div>
                 )}
@@ -730,6 +795,7 @@ export default function App() {
                   onSelectAnswer={handleSelectAnswer}
                   onNextQuestion={handleNextQuestion}
                   difficultyMode={inputStyle}
+                  difficulty={difficulty}
                   onToggleDifficulty={() => {
                     sound.playButtonPress();
                     setInputStyle((prev) => (prev === 'options' ? 'master' : 'options'));
@@ -744,10 +810,18 @@ export default function App() {
         {mode === 'evolution' && (
           <div className="w-full my-auto py-2">
             <EvolutionGame
+              difficulty={difficulty}
               onScoreEarned={handleSubGameScore}
               onAdvanceMilestone={() => {
-                const { updatedAccount } = evaluateAchievements(account, { evolutionOrganized: true });
-                setAccount({ ...updatedAccount });
+                setAccount((prevAccount) => {
+                  const { updatedAccount, newUnlocks } = evaluateAchievements(prevAccount, { evolutionOrganized: true });
+                  saveActiveAccount(updatedAccount);
+                  if (newUnlocks.length > 0) {
+                    sound.playTrophyUnlock();
+                    triggerConfetti();
+                  }
+                  return updatedAccount;
+                });
               }}
             />
           </div>
@@ -760,8 +834,15 @@ export default function App() {
               onScoreEarned={(pts, isCorrect, timeRem) => {
                 handleSubGameScore(pts, isCorrect);
                 if (isCorrect) {
-                  const { updatedAccount } = evaluateAchievements(account, { cryGuessed: true, timeRemaining: timeRem });
-                  setAccount({ ...updatedAccount });
+                  setAccount((prevAccount) => {
+                    const { updatedAccount, newUnlocks } = evaluateAchievements(prevAccount, { cryGuessed: true, timeRemaining: timeRem });
+                    saveActiveAccount(updatedAccount);
+                    if (newUnlocks.length > 0) {
+                      sound.playTrophyUnlock();
+                      triggerConfetti();
+                    }
+                    return updatedAccount;
+                  });
                 }
               }}
               onAdvanceMilestone={() => {}}
@@ -776,8 +857,15 @@ export default function App() {
               onScoreEarned={(pts, isCorrect) => {
                 handleSubGameScore(pts, isCorrect);
                 if (isCorrect) {
-                  const { updatedAccount } = evaluateAchievements(account, { moveGuessed: true });
-                  setAccount({ ...updatedAccount });
+                  setAccount((prevAccount) => {
+                    const { updatedAccount, newUnlocks } = evaluateAchievements(prevAccount, { moveGuessed: true });
+                    saveActiveAccount(updatedAccount);
+                    if (newUnlocks.length > 0) {
+                      sound.playTrophyUnlock();
+                      triggerConfetti();
+                    }
+                    return updatedAccount;
+                  });
                 }
               }}
               onAdvanceMilestone={() => {}}
@@ -810,8 +898,42 @@ export default function App() {
           <div className="w-full my-auto py-2">
             <Duel1v1Game
               currentTrainerName={account.displayName}
-              onScoreEarned={(pts) => handleSubGameScore(pts, true)}
+              initialRoomCode={new URLSearchParams(window.location.search).get('duelRoom')}
+              onTokensEarned={handleTokensEarned}
+              onScoreEarned={(pts) => {
+                handleSubGameScore(pts, true);
+                setAccount((prevAccount) => {
+                  const { updatedAccount, newUnlocks } = evaluateAchievements(prevAccount, { is1v1Win: true, pointsScored: pts });
+                  saveActiveAccount(updatedAccount);
+                  if (newUnlocks.length > 0) {
+                    sound.playTrophyUnlock();
+                    triggerConfetti();
+                  }
+                  return updatedAccount;
+                });
+              }}
               onAdvanceMilestone={() => {}}
+            />
+          </div>
+        )}
+
+        {/* 8. BATTLE PREDICTOR (WHO WILL WIN?) */}
+        {mode === 'battle' && (
+          <div className="w-full my-auto py-2">
+            <BattlePredictorGame
+              difficulty={difficulty}
+              onScoreEarned={handleSubGameScore}
+              onAdvanceMilestone={() => {
+                setAccount((prevAccount) => {
+                  const { updatedAccount, newUnlocks } = evaluateAchievements(prevAccount, { is1v1Win: true });
+                  saveActiveAccount(updatedAccount);
+                  if (newUnlocks.length > 0) {
+                    sound.playTrophyUnlock();
+                    triggerConfetti();
+                  }
+                  return updatedAccount;
+                });
+              }}
             />
           </div>
         )}

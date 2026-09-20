@@ -1,63 +1,125 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, CheckCircle2, XCircle, ArrowRight, RefreshCw, Trophy, Clock, Play, GitBranch } from 'lucide-react';
-import { EvolutionChain, Pokemon } from '../../types/pokemon';
+import { EvolutionChain, GameDifficulty, Pokemon } from '../../types/pokemon';
 import { EVOLUTION_CHAINS } from '../../data/pokemonData';
 import { sound } from '../../utils/audio';
 
 interface EvolutionGameProps {
+  difficulty?: GameDifficulty;
   onScoreEarned: (points: number, isPerfect: boolean) => void;
   onAdvanceMilestone: () => void;
 }
 
+function generateShuffledDeck(): number[] {
+  const indices = EVOLUTION_CHAINS.map((_, i) => i);
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+  return indices;
+}
+
 export const EvolutionGame: React.FC<EvolutionGameProps> = ({
+  difficulty = 'normal',
   onScoreEarned,
   onAdvanceMilestone,
 }) => {
+  const isExtreme = difficulty === 'extreme';
+  const initialTimeLimit = isExtreme ? 30 : 25;
+
   const [isStarted, setIsStarted] = useState(false);
-  const [chainIndex, setChainIndex] = useState(0);
-  const [currentSlots, setCurrentSlots] = useState<Pokemon[]>([]);
+  const [deck, setDeck] = useState<number[]>(() => generateShuffledDeck());
+  const [deckIndex, setDeckIndex] = useState(0);
+  const [roundNumber, setRoundNumber] = useState(1);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [status, setStatus] = useState<'idle' | 'correct' | 'wrong'>('idle');
-  const [roundTimer, setRoundTimer] = useState(20);
+  const [roundTimer, setRoundTimer] = useState(initialTimeLimit);
   const [timerActive, setTimerActive] = useState(false);
 
-  const chain: EvolutionChain = EVOLUTION_CHAINS[chainIndex % EVOLUTION_CHAINS.length];
+  const currentChainIndex = deck[deckIndex % deck.length] ?? 0;
+  const chain: EvolutionChain = EVOLUTION_CHAINS[currentChainIndex] || EVOLUTION_CHAINS[0];
+
+  const [currentSlots, setCurrentSlots] = useState<Pokemon[]>(() => {
+    const initialChain = EVOLUTION_CHAINS[deck[0] ?? 0] || EVOLUTION_CHAINS[0];
+    const shuffled = [...initialChain.stagePokemon].sort(() => Math.random() - 0.5);
+    if (shuffled.every((p, idx) => p.name === initialChain.stagePokemon[idx].name)) {
+      shuffled.reverse();
+    }
+    return shuffled;
+  });
+
+  // Keep a ref to handleCheck so timer interval does not call stale or in-render setState
+  const handleCheckRef = useRef<(timedOut?: boolean) => void>(() => {});
 
   // Initialize randomized slots
-  const loadNextChain = (nextIdx: number, autoStart: boolean = true) => {
-    const nextChain = EVOLUTION_CHAINS[nextIdx % EVOLUTION_CHAINS.length];
+  const loadNextChain = (nextDeckIdx: number, autoStart: boolean = true) => {
+    let currentDeck = deck;
+    let targetIdx = nextDeckIdx;
+    if (nextDeckIdx >= deck.length) {
+      currentDeck = generateShuffledDeck();
+      setDeck(currentDeck);
+      targetIdx = 0;
+    }
+    const selectedChainIndex = currentDeck[targetIdx % currentDeck.length];
+    const nextChain = EVOLUTION_CHAINS[selectedChainIndex];
     const shuffled = [...nextChain.stagePokemon].sort(() => Math.random() - 0.5);
     // ensure not in exact order initially
     if (shuffled.every((p, idx) => p.name === nextChain.stagePokemon[idx].name)) {
       shuffled.reverse();
     }
-    setChainIndex(nextIdx);
+    setDeckIndex(targetIdx);
+    setRoundNumber((prev) => prev + 1);
     setCurrentSlots(shuffled);
     setSelectedIndex(null);
     setStatus('idle');
-    setRoundTimer(20);
+    setRoundTimer(initialTimeLimit);
     setTimerActive(autoStart);
   };
 
-  useEffect(() => {
-    loadNextChain(0, false);
-  }, []);
+  // Check if correct order
+  const handleCheck = (timedOut: boolean = false) => {
+    if (status !== 'idle') return;
+
+    const isCorrect = !timedOut && currentSlots.every((p, idx) => p.name === chain.stagePokemon[idx].name);
+
+    if (isCorrect) {
+      setStatus('correct');
+      sound.playCorrect();
+      sound.playTrophyUnlock();
+      const speedBonus = Math.round(roundTimer * 25);
+      const points = 350 + speedBonus;
+      onScoreEarned(points, true);
+      onAdvanceMilestone();
+    } else {
+      setStatus('wrong');
+      sound.playWrong();
+      onScoreEarned(50, false);
+    }
+    setTimerActive(false);
+  };
+
+  handleCheckRef.current = handleCheck;
 
   // Timer countdown (only active when game is started)
   useEffect(() => {
     if (!isStarted || !timerActive || status !== 'idle') return;
+
     const interval = setInterval(() => {
       setRoundTimer((prev) => {
-        if (prev <= 0.1) {
+        const next = Math.max(0, parseFloat((prev - 0.1).toFixed(1)));
+        if (next <= 0) {
           clearInterval(interval);
-          setTimerActive(false);
-          handleCheck(true);
+          // Defer timeout handler outside state updater to prevent setState-in-render errors
+          setTimeout(() => {
+            handleCheckRef.current(true);
+          }, 0);
           return 0;
         }
-        return Math.max(0, prev - 0.1);
+        return next;
       });
     }, 100);
+
     return () => clearInterval(interval);
   }, [isStarted, timerActive, status]);
 
@@ -83,28 +145,6 @@ export const EvolutionGame: React.FC<EvolutionGameProps> = ({
       setCurrentSlots(updated);
       setSelectedIndex(null);
     }
-  };
-
-  // Check if correct order
-  const handleCheck = (timedOut: boolean = false) => {
-    if (status !== 'idle') return;
-
-    const isCorrect = !timedOut && currentSlots.every((p, idx) => p.name === chain.stagePokemon[idx].name);
-
-    if (isCorrect) {
-      setStatus('correct');
-      sound.playCorrect();
-      sound.playTrophyUnlock();
-      const speedBonus = Math.round(roundTimer * 25);
-      const points = 350 + speedBonus;
-      onScoreEarned(points, true);
-      onAdvanceMilestone();
-    } else {
-      setStatus('wrong');
-      sound.playWrong();
-      onScoreEarned(50, false);
-    }
-    setTimerActive(false);
   };
 
   // Helper to determine stage name for a pokemon once revealed
@@ -157,7 +197,7 @@ export const EvolutionGame: React.FC<EvolutionGameProps> = ({
             Evolution Line Organizer
           </span>
           <span className="text-xs text-slate-400 font-medium">
-            Round {chainIndex + 1} (Endless)
+            Round {roundNumber} (Endless)
           </span>
         </div>
 
@@ -279,11 +319,11 @@ export const EvolutionGame: React.FC<EvolutionGameProps> = ({
               id="btn-next-evolution"
               onClick={() => {
                 sound.playButtonPress();
-                loadNextChain(chainIndex + 1, true);
+                loadNextChain(deckIndex + 1, true);
               }}
               className="py-2.5 px-6 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white font-display font-bold text-sm flex items-center gap-2 shadow-lg shadow-rose-500/30 transition-all hover:scale-105"
             >
-              <span>Next Evolution Line (Round {chainIndex + 2})</span>
+              <span>Next Evolution Line (Round {roundNumber + 1})</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           )}

@@ -250,6 +250,14 @@ class SoundSystem {
     });
   }
 
+  public playFanfare() {
+    this.playTrophyUnlock();
+  }
+
+  public playLevelUp() {
+    this.playTrophyUnlock();
+  }
+
   public playLevelUpSound() {
     this.playTrophyUnlock();
   }

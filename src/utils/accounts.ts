@@ -41,6 +41,14 @@ export function createDefaultAccount(username: string = 'Trainer Red', pin: stri
     },
     achievements: {},
     trophies: {},
+    showcasedAchievements: [],
+    friends: ['Trainer Blue', 'Champion Cynthia', 'Gym Leader Brock'],
+    dailyStreak: 1,
+    lastLoginDateIST: '',
+    claimedDailyStreakDays: [],
+    battleTokens: 250,
+    inventory: {},
+    unlockedTrainerAvatars: ['red'],
     createdAt: new Date().toISOString(),
   };
 }
@@ -79,6 +87,14 @@ export function getActiveAccount(): TrainerAccount {
       localStorage.setItem(STORAGE_ACTIVE_ID_KEY, current.id);
     }
   }
+
+  // Ensure newer fields are initialized
+  if (typeof current.dailyStreak !== 'number') current.dailyStreak = 1;
+  if (typeof current.battleTokens !== 'number') current.battleTokens = 250;
+  if (!current.inventory) current.inventory = {};
+  if (!current.claimedDailyStreakDays) current.claimedDailyStreakDays = [];
+  if (!current.unlockedTrainerAvatars) current.unlockedTrainerAvatars = ['red'];
+
   return current;
 }
 
@@ -143,6 +159,9 @@ export function evaluateAchievements(
     evolutionOrganized?: boolean;
     cryGuessed?: boolean;
     moveGuessed?: boolean;
+    difficulty?: string;
+    friendAdded?: boolean;
+    is1v1Win?: boolean;
   }
 ): { updatedAccount: TrainerAccount; newUnlocks: string[] } {
   const acc = { ...account };
@@ -177,6 +196,39 @@ export function evaluateAchievements(
       if (record.progress >= ach.maxProgress) shouldUnlock = true;
     } else if (ach.id === 'legendary_conqueror' && params.gameMode === 'legendary' && (params.pointsScored || 0) >= 2500) {
       record.progress = params.pointsScored || 0;
+      shouldUnlock = true;
+    } else if (ach.id === 'extreme_codebreaker' && params.difficulty === 'extreme' && params.isCorrect) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'blitz_champion' && (params.gameMode === 'blitz' || (params.pointsScored || 0) >= 1000)) {
+      record.progress = Math.max(record.progress || 0, params.pointsScored || 0);
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'trainer_fellowship' && params.friendAdded) {
+      record.progress = 1;
+      shouldUnlock = true;
+    } else if (ach.id === 'badge_boulder' && (params.streak || 0) >= 3) {
+      record.progress = Math.max(record.progress || 0, params.streak || 0);
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'badge_cascade' && params.pokemonTypes?.includes('water') && params.isCorrect) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'badge_thunder' && ((params.timeRemaining || 0) >= 13.0 || params.gameMode === 'blitz')) {
+      record.progress = 1;
+      shouldUnlock = true;
+    } else if (ach.id === 'badge_rainbow' && params.isCorrect) {
+      record.progress = Math.min(ach.maxProgress, (record.progress || 0) + 1);
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'badge_soul' && (params.streak || 0) >= 8) {
+      record.progress = Math.max(record.progress || 0, params.streak || 0);
+      shouldUnlock = true;
+    } else if (ach.id === 'badge_marsh' && params.difficulty === 'extreme' && params.isCorrect) {
+      record.progress = 1;
+      shouldUnlock = true;
+    } else if (ach.id === 'badge_volcano' && (params.is1v1Win || params.gameMode === 'duel')) {
+      record.progress = 1;
+      shouldUnlock = true;
+    } else if (ach.id === 'badge_earth' && (acc.trophyPoints >= 2000 || acc.totalScore >= 2000)) {
+      record.progress = Math.max(acc.trophyPoints, acc.totalScore);
       shouldUnlock = true;
     }
 

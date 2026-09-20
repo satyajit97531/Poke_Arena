@@ -37,17 +37,19 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({
     icon: React.ComponentType<{ className?: string }>;
   }[] = [
     { id: 'classic', label: 'Silhouette', icon: Target },
+    { id: 'battle', label: 'Predict Winner', badge: 'Battle', icon: Swords },
     { id: 'legendary', label: 'Legendary Arena', badge: 'Rare', icon: Crown },
     { id: 'evolution', label: 'Evolution Line', badge: 'Puzzle', icon: GitBranch },
     { id: 'cry', label: 'Pokémon Cry', badge: 'Audio', icon: Volume2 },
-    { id: 'moves', label: 'Attack Moves', badge: 'Battle', icon: Swords },
+    { id: 'moves', label: 'Attack Moves', badge: 'Moves', icon: Zap },
     { id: 'region_guess', label: 'Region Guess', icon: Compass },
     { id: 'type_guess', label: 'Type Master', icon: Layers },
     { id: '1v1', label: '1v1 Duel', badge: 'QR Code', icon: Users },
     { id: 'blitz', label: 'Blitz 60s', icon: Zap },
   ];
 
-  const isSilhouetteBased = mode === 'classic' || mode === 'legendary' || mode === 'blitz' || mode === 'survival' || mode === 'zen';
+  // Restrict region changing feature strictly to silhouette mode only as requested
+  const isSilhouetteOnly = mode === 'classic' || mode === 'silhouette';
 
   return (
     <div className="w-full max-w-xl mx-auto flex flex-col gap-2.5 py-1">
@@ -87,8 +89,8 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({
         })}
       </div>
 
-      {/* Region Selector (Applicable to silhouette & classic/legendary games) */}
-      {isSilhouetteBased && (
+      {/* Region Selector (Applicable strictly to silhouette mode only) */}
+      {isSilhouetteOnly && (
         <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin scrollbar-thumb-slate-800">
           <div className="flex items-center gap-1 text-[11px] text-slate-500 font-semibold uppercase tracking-wider pl-1 shrink-0">
             <Compass className="w-3.5 h-3.5 text-slate-400" />

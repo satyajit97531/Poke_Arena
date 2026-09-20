@@ -27,35 +27,43 @@ export function generateQuestion(
   if (mode === 'legendary') {
     pool = LEGENDARY_POKEMON.length > 0 ? LEGENDARY_POKEMON : pool;
   } else if (difficulty === 'hard') {
-    // Hard Mode: user requested "also use huisian, galarian, paldian etc pokemons in this hard mode."
+    // Hard Mode: user requested "also use hisuian, galarian, paldian etc pokemons in this hard mode."
     pool = REGIONAL_FORMS_POKEMON.length > 0 ? REGIONAL_FORMS_POKEMON : pool;
   }
 
-  const eligible = pool.filter((p) => !excludeIds.has(p.id));
-  const candidatePool = eligible.length >= 4 ? eligible : pool;
+  // Safety fallback if pool is empty or invalid
+  if (!pool || pool.length === 0) {
+    pool = CURATED_POKEMON;
+  }
 
-  const target = getRandomElement(candidatePool);
+  const eligible = pool.filter((p) => p && !excludeIds.has(p.id));
+  const candidatePool = eligible.length >= 4 ? eligible : (pool.length > 0 ? pool : CURATED_POKEMON);
 
-  // Pick 3 distractors
-  const otherPool = CURATED_POKEMON.filter((p) => p.id !== target.id);
+  const target = getRandomElement(candidatePool) || getRandomElement(CURATED_POKEMON) || CURATED_POKEMON[0];
+
+  // Pick 3 distractors STRICTLY from the active pool:
+  // - In Legendary Arena: ONLY legendaries!
+  // - In a specific region: ONLY that region's Pokémon!
+  // - Otherwise: from diverse general pool
   const distractors: Pokemon[] = [];
+  const validDistractorPool = pool.filter((p) => p && target && p.id !== target.id);
+  const shuffledPool = shuffleArray(validDistractorPool);
 
-  // Try to pick distractors from matching regional pool if possible
-  const sameRegion = otherPool.filter((p) => p.region === target.region);
-  const shuffledSame = shuffleArray(sameRegion);
-
-  while (distractors.length < 2 && shuffledSame.length > 0) {
-    const pick = shuffledSame.pop()!;
-    if (!distractors.some((d) => d.id === pick.id)) {
-      distractors.push(pick);
+  for (const candidate of shuffledPool) {
+    if (distractors.length >= 3) break;
+    if (!distractors.some((d) => d.id === candidate.id)) {
+      distractors.push(candidate);
     }
   }
 
-  const remainingShuffled = shuffleArray(otherPool);
-  while (distractors.length < 3 && remainingShuffled.length > 0) {
-    const pick = remainingShuffled.pop()!;
-    if (!distractors.some((d) => d.id === pick.id)) {
-      distractors.push(pick);
+  // Safety fallback ONLY if specific pool had fewer than 4 total Pokémon
+  if (distractors.length < 3 && mode !== 'legendary' && region === 'all') {
+    const backupPool = shuffleArray(CURATED_POKEMON.filter((p) => p.id !== target.id));
+    for (const b of backupPool) {
+      if (distractors.length >= 3) break;
+      if (!distractors.some((d) => d.id === b.id)) {
+        distractors.push(b);
+      }
     }
   }
 
@@ -72,10 +80,12 @@ export function generateQuestion(
     shadowCrop = parts[Math.floor(Math.random() * parts.length)];
   }
 
+  const questionTimeLimit = difficulty === 'extreme' ? 30 : mode === 'blitz' ? 60 : 15;
+
   return {
     pokemon: target,
     options,
-    timeLimit: mode === 'blitz' ? 60 : 15,
+    timeLimit: questionTimeLimit,
     difficulty,
     shadowCrop,
     revealedHints: {

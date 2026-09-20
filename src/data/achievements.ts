@@ -1,6 +1,6 @@
 import { Achievement } from '../types/pokemon';
 
-export const ACHIEVEMENTS_LIST: Achievement[] = [
+const BASE_ACHIEVEMENTS: Achievement[] = [
   {
     id: 'first_catch',
     title: 'First Catch',
@@ -160,109 +160,89 @@ export const ACHIEVEMENTS_LIST: Achievement[] = [
     rewardAvatarId: 25,
     rewardTrophyPoints: 200,
   },
-  // Official Gym Badges
   {
-    id: 'badge_boulder',
-    title: 'Boulder Badge',
-    description: 'Pewter City Gym: Prove rock-solid instincts by winning 3 consecutive rounds.',
-    category: 'badges',
-    progress: 0,
-    maxProgress: 3,
-    unlocked: false,
-    rewardTrophyPoints: 300,
-    isGymBadge: true,
-    badgeRegion: 'Kanto',
-    badgeColor: 'from-stone-400 to-zinc-600',
-  },
-  {
-    id: 'badge_cascade',
-    title: 'Cascade Badge',
-    description: 'Cerulean City Gym: Master aquatic depths by identifying 5 Water-type Pokémon.',
-    category: 'badges',
+    id: 'extreme_archivist',
+    title: 'Extreme Biological Savant',
+    description: 'Identify 5 Pokémon correctly in Extreme difficulty with zero multiple-choice options.',
+    category: 'modes',
     progress: 0,
     maxProgress: 5,
     unlocked: false,
-    rewardTrophyPoints: 350,
-    isGymBadge: true,
-    badgeRegion: 'Kanto',
-    badgeColor: 'from-cyan-400 to-blue-600',
+    rewardAvatarId: 493, // Arceus
+    rewardTrophyPoints: 800,
   },
   {
-    id: 'badge_thunder',
-    title: 'Thunder Badge',
-    description: 'Vermilion City Gym: Showcase lightning reflexes by finishing a Blitz run or answering within 2s.',
-    category: 'badges',
-    progress: 0,
-    maxProgress: 1,
-    unlocked: false,
-    rewardTrophyPoints: 350,
-    isGymBadge: true,
-    badgeRegion: 'Kanto',
-    badgeColor: 'from-amber-300 to-yellow-500',
-  },
-  {
-    id: 'badge_rainbow',
-    title: 'Rainbow Badge',
-    description: 'Celadon City Gym: Demonstrate broad biological knowledge across 4 different Pokémon generations.',
+    id: 'badge_connoisseur',
+    title: 'Kanto League Qualifier',
+    description: 'Earn 4 or more official Kanto Gym Badges.',
     category: 'badges',
     progress: 0,
     maxProgress: 4,
     unlocked: false,
-    rewardTrophyPoints: 400,
-    isGymBadge: true,
-    badgeRegion: 'Kanto',
-    badgeColor: 'from-emerald-400 via-pink-400 to-cyan-400',
+    rewardSongId: 'cynthia_theme',
+    rewardTrophyPoints: 600,
   },
   {
-    id: 'badge_soul',
-    title: 'Soul Badge',
-    description: 'Fuchsia City Gym: Evade poisonous hazards by reaching an unbroken answer streak of 8.',
-    category: 'badges',
+    id: 'jukebox_virtuoso',
+    title: 'Pokémon Soundscape Maestro',
+    description: 'Unlock 5 or more nostalgic Pokémon background music tracks.',
+    category: 'collector',
     progress: 0,
-    maxProgress: 8,
+    maxProgress: 5,
     unlocked: false,
+    rewardSongId: 'driftveil_city',
+    rewardTrophyPoints: 350,
+  },
+  {
+    id: 'speed_demon_blitz',
+    title: 'Hyper-Velocity Striker',
+    description: 'Score 1,500+ points in a single 60s Blitz run.',
+    category: 'speed',
+    progress: 0,
+    maxProgress: 1500,
+    unlocked: false,
+    rewardAvatarId: 887,
+    rewardTrophyPoints: 500,
+  },
+  {
+    id: 'rival_duelist',
+    title: 'Colosseum Gladiator',
+    description: 'Participate in intense 1v1 PvP Arena rounds and earn speed bonus points.',
+    category: 'modes',
+    progress: 0,
+    maxProgress: 3,
+    unlocked: false,
+    rewardSongId: 'wild_pokemon_battle',
     rewardTrophyPoints: 450,
-    isGymBadge: true,
-    badgeRegion: 'Kanto',
-    badgeColor: 'from-pink-500 to-purple-700',
-  },
-  {
-    id: 'badge_marsh',
-    title: 'Marsh Badge',
-    description: 'Saffron City Gym: Tap into psychic foresight by answering correctly on Extreme mode.',
-    category: 'badges',
-    progress: 0,
-    maxProgress: 1,
-    unlocked: false,
-    rewardTrophyPoints: 500,
-    isGymBadge: true,
-    badgeRegion: 'Kanto',
-    badgeColor: 'from-purple-400 to-indigo-600',
-  },
-  {
-    id: 'badge_volcano',
-    title: 'Volcano Badge',
-    description: 'Cinnabar Island Gym: Outwit opponents in intense 1v1 Arena battles.',
-    category: 'badges',
-    progress: 0,
-    maxProgress: 1,
-    unlocked: false,
-    rewardTrophyPoints: 500,
-    isGymBadge: true,
-    badgeRegion: 'Kanto',
-    badgeColor: 'from-orange-500 to-red-600',
-  },
-  {
-    id: 'badge_earth',
-    title: 'Earth Badge',
-    description: 'Viridian City Gym: Attain true Pokémon Master status by collecting 2,000+ total career points.',
-    category: 'badges',
-    progress: 0,
-    maxProgress: 2000,
-    unlocked: false,
-    rewardTrophyPoints: 750,
-    isGymBadge: true,
-    badgeRegion: 'Kanto',
-    badgeColor: 'from-amber-600 to-emerald-700',
   },
 ];
+
+import { ALL_REGIONAL_BADGES, GymBadgeInfo } from './regionalBadges';
+export { ALL_REGIONAL_BADGES };
+export type { GymBadgeInfo };
+
+// Automatically convert all regional gym badges into achievements
+const ALL_GYM_BADGE_ACHIEVEMENTS: Achievement[] = Object.values(ALL_REGIONAL_BADGES)
+  .flat()
+  .map((b) => ({
+    id: b.id,
+    title: b.name,
+    description: `${b.town} (${b.gymLeader}): ${b.description}`,
+    category: 'badges' as const,
+    progress: 0,
+    maxProgress: 1,
+    unlocked: false,
+    rewardTrophyPoints: b.rewardTrophyPoints,
+    isGymBadge: true,
+    badgeRegion: b.region,
+    badgeColor: b.color,
+  }));
+
+export const ACHIEVEMENTS_LIST: Achievement[] = [
+  ...BASE_ACHIEVEMENTS,
+  ...ALL_GYM_BADGE_ACHIEVEMENTS,
+];
+
+export const KANTO_BADGES: GymBadgeInfo[] = ALL_REGIONAL_BADGES.Kanto;
+
+

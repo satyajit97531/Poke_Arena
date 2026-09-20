@@ -45,6 +45,7 @@ export type MainGameMode =
   | 'cry'            // Guess by Pokémon Cry
   | 'moves'          // Guess by 1, 2, or 3 Moves / Attacks
   | 'move'           // Alias
+  | 'battle'         // Battle Predictor / Matchup (Who will win?)
   | 'region_guess'   // Guess Region
   | 'region'         // Alias
   | 'type_guess'     // Guess Types & Vice Versa
@@ -185,6 +186,44 @@ export interface PlayerProfile {
   regionalMastery: Record<RegionId, { correct: number; total: number }>;
 }
 
+export type AvatarRarity = 'normal' | 'rare' | 'super_rare' | 'epic' | 'mythic' | 'legendary';
+
+export interface TrainerAvatarInfo {
+  id: string; // e.g. '25' or 'red'
+  numericId?: number;
+  name: string;
+  title: string;
+  rarity: AvatarRarity;
+  unlockDesc: string;
+  imageUrl: string;
+  category: 'pokemon' | 'hisui' | 'trainer';
+}
+
+export interface ShopItem {
+  id: string;
+  name: string;
+  description: string;
+  category: 'ball' | 'medicine' | 'evolution' | 'held' | 'key' | 'trainer' | 'free';
+  rarity: AvatarRarity;
+  cost: number; // 0 = free
+  icon: string;
+  rewardType: 'item' | 'tokens' | 'avatar';
+  rewardValue?: string | number;
+  claimIntervalDays?: number; // 1 for daily free claim
+}
+
+export interface TrophyMilestone {
+  tpRequired: number;
+  title: string;
+  badgeName: string;
+  badgeIcon: string;
+  badgeColor: string;
+  bgmTitle: string;
+  bgmId: string;
+  tokens: number;
+  description: string;
+}
+
 export interface TrainerAccount {
   id: string;
   email?: string;
@@ -192,11 +231,13 @@ export interface TrainerAccount {
   pin: string;
   displayName: string;
   avatarId: number; // Pokemon ID for profile picture
+  trainerAvatarId?: string; // e.g. 'red', 'blue', 'leaf', 'ash', 'misty', 'dawn', 'brock'
   title: string;
   level: number;
   exp: number;
   trophyPoints: number; // Limitless trophy progression
   unlockedAvatars: number[];
+  unlockedTrainerAvatars?: string[];
   unlockedSongIds: string[];
   activeSongId: string;
   totalGames: number;
@@ -211,6 +252,14 @@ export interface TrainerAccount {
   trophies: Record<string, { progress: number; unlocked: boolean; unlockedAt?: string }>;
   showcasedAchievements?: string[];
   friends?: string[];
+  // Daily Streak in Indian Standard Time (IST - UTC+5:30)
+  dailyStreak: number;
+  lastLoginDateIST: string;
+  claimedDailyStreakDays: number[];
+  // In-game Currency won in 1v1 duels & daily claims
+  battleTokens: number;
+  inventory: Record<string, number>; // item_id -> quantity
+  claimedFreeShopDateIST?: string;
   createdAt: string;
 }
 

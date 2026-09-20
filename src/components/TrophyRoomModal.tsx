@@ -1,23 +1,35 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Trophy as TrophyIcon, Sparkles, Lock, CheckCircle2, Award, Filter } from 'lucide-react';
+import { X, Trophy as TrophyIcon, Sparkles, Lock, CheckCircle2, Award, Filter, Flame, Calendar, Gift, Zap, Swords } from 'lucide-react';
 import { Trophy } from '../types/pokemon';
 import { OFFICIAL_ARTWORK_URL, SHINY_ARTWORK_URL } from '../data/pokemonData';
+import { TROPHY_ROAD_REWARDS, TRAINING_BOUNTIES_REWARDS } from '../data/rewardsData';
 import { sound } from '../utils/audio';
 
 interface TrophyRoomModalProps {
   isOpen: boolean;
   onClose: () => void;
   trophies: Trophy[];
+  initialView?: 'vault' | 'trophy_road' | 'bounties';
+  currentTrophyPoints?: number;
 }
 
 export const TrophyRoomModal: React.FC<TrophyRoomModalProps> = ({
   isOpen,
   onClose,
   trophies,
+  initialView = 'trophy_road',
+  currentTrophyPoints = 0,
 }) => {
+  const [viewMode, setViewMode] = useState<'vault' | 'trophy_road' | 'bounties'>(initialView);
   const [filter, setFilter] = useState<'all' | 'unlocked' | 'locked'>('all');
   const [selectedTrophy, setSelectedTrophy] = useState<Trophy | null>(null);
+
+  useEffect(() => {
+    if (isOpen && initialView) {
+      setViewMode(initialView);
+    }
+  }, [isOpen, initialView]);
 
   if (!isOpen) return null;
 
@@ -27,6 +39,13 @@ export const TrophyRoomModal: React.FC<TrophyRoomModalProps> = ({
     if (filter === 'locked') return !t.unlocked;
     return true;
   });
+
+  const formatTrophyCount = (val: number) => {
+    if (val >= 10000000) return `${val / 100000} Lakh (10M)`;
+    if (val >= 100000) return `${val / 100000} Lakh`;
+    if (val >= 1000) return `${val / 1000}k`;
+    return val.toLocaleString();
+  };
 
   const getTierBadge = (tier: Trophy['tier']) => {
     switch (tier) {
@@ -82,125 +101,300 @@ export const TrophyRoomModal: React.FC<TrophyRoomModalProps> = ({
           </button>
         </div>
 
-        {/* Filter Pill Tabs */}
-        <div className="px-5 py-2.5 border-b border-slate-800/80 flex items-center justify-between bg-slate-900/60 text-xs">
-          <div className="flex items-center gap-1">
-            {(['all', 'unlocked', 'locked'] as const).map((f) => (
-              <button
-                key={f}
-                id={`trophy-filter-${f}`}
-                onClick={() => {
-                  sound.playClick();
-                  setFilter(f);
-                }}
-                className={`px-3 py-1 rounded-lg capitalize font-medium transition-all ${
-                  filter === f
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                {f} {f === 'unlocked' ? `(${unlockedCount})` : f === 'locked' ? `(${trophies.length - unlockedCount})` : ''}
-              </button>
-            ))}
+        {/* Mode Selector Tabs */}
+        <div className="px-5 py-2.5 border-b border-slate-800 flex items-center justify-between bg-slate-900/90 text-xs overflow-x-auto">
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => {
+                sound.playClick();
+                setViewMode('vault');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition-all shrink-0 ${
+                viewMode === 'vault'
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <TrophyIcon className="w-3.5 h-3.5" />
+              <span>Trophy Vault ({unlockedCount}/{trophies.length})</span>
+            </button>
+
+            <button
+              onClick={() => {
+                sound.playClick();
+                setViewMode('trophy_road');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition-all shrink-0 ${
+                viewMode === 'trophy_road'
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Gift className="w-3.5 h-3.5" />
+              <span>100 Lakh Trophy Road ({TROPHY_ROAD_REWARDS.length})</span>
+            </button>
+
+            <button
+              onClick={() => {
+                sound.playClick();
+                setViewMode('bounties');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition-all shrink-0 ${
+                viewMode === 'bounties'
+                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Swords className="w-3.5 h-3.5" />
+              <span>Training Bounties ({TRAINING_BOUNTIES_REWARDS.length})</span>
+            </button>
           </div>
 
-          <span className="text-[11px] text-slate-500 hidden sm:inline">
-            Click any trophy to inspect artwork & lore
-          </span>
+          {viewMode === 'vault' && (
+            <div className="flex items-center gap-1 shrink-0 ml-2">
+              {(['all', 'unlocked', 'locked'] as const).map((f) => (
+                <button
+                  key={f}
+                  id={`trophy-filter-${f}`}
+                  onClick={() => {
+                    sound.playClick();
+                    setFilter(f);
+                  }}
+                  className={`px-2.5 py-1 rounded-md capitalize font-medium transition-all ${
+                    filter === f
+                      ? 'bg-slate-800 text-amber-300 font-bold border border-slate-700'
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Trophies Grid */}
-        <div className="p-5 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 flex-1">
-          {filteredTrophies.map((trophy) => {
-            const tierBadge = getTierBadge(trophy.tier);
-            const artworkUrl = trophy.id === 'total_score_10000'
-              ? SHINY_ARTWORK_URL(trophy.pokemonId)
-              : OFFICIAL_ARTWORK_URL(trophy.pokemonId);
+        {/* View 1: Trophies Grid */}
+        {viewMode === 'vault' && (
+          <div className="p-5 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 flex-1">
+            {filteredTrophies.map((trophy) => {
+              const tierBadge = getTierBadge(trophy.tier);
+              const artworkUrl = trophy.id === 'total_score_10000'
+                ? SHINY_ARTWORK_URL(trophy.pokemonId)
+                : OFFICIAL_ARTWORK_URL(trophy.pokemonId);
 
-            return (
-              <div
-                key={trophy.id}
-                id={`trophy-card-${trophy.id}`}
-                onClick={() => setSelectedTrophy(trophy)}
-                className={`relative rounded-xl border p-4 flex flex-col justify-between transition-all cursor-pointer group ${
-                  trophy.unlocked
-                    ? 'bg-gradient-to-b from-slate-850 to-slate-900 border-amber-500/40 hover:border-amber-400/80 shadow-lg shadow-amber-950/20 hover:scale-[1.02]'
-                    : 'bg-slate-950/60 border-slate-800/80 opacity-75 hover:opacity-100 hover:border-slate-700'
-                }`}
-              >
-                {/* Holographic shimmer for unlocked */}
-                {trophy.unlocked && (
-                  <div className="absolute inset-0 holographic-shine rounded-xl pointer-events-none opacity-40"></div>
-                )}
-
-                {/* Card Top: Tier and Status */}
-                <div className="flex items-center justify-between gap-2 mb-2 relative z-10">
-                  <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${tierBadge.bg}`}>
-                    {tierBadge.label}
-                  </span>
-
-                  {trophy.unlocked ? (
-                    <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-semibold">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Unlocked</span>
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-1 text-[11px] text-slate-500">
-                      <Lock className="w-3 h-3" />
-                      <span>Locked</span>
-                    </span>
+              return (
+                <div
+                  key={trophy.id}
+                  id={`trophy-card-${trophy.id}`}
+                  onClick={() => setSelectedTrophy(trophy)}
+                  className={`relative rounded-xl border p-4 flex flex-col justify-between transition-all cursor-pointer group ${
+                    trophy.unlocked
+                      ? 'bg-gradient-to-b from-slate-850 to-slate-900 border-amber-500/40 hover:border-amber-400/80 shadow-lg shadow-amber-950/20 hover:scale-[1.02]'
+                      : 'bg-slate-950/60 border-slate-800/80 opacity-75 hover:opacity-100 hover:border-slate-700'
+                  }`}
+                >
+                  {/* Holographic shimmer for unlocked */}
+                  {trophy.unlocked && (
+                    <div className="absolute inset-0 holographic-shine rounded-xl pointer-events-none opacity-40"></div>
                   )}
-                </div>
 
-                {/* Trophy Showcase Artwork */}
-                <div className="relative my-2 w-full h-28 flex items-center justify-center">
-                  <div className="absolute w-24 h-24 rounded-full bg-slate-800/50 -z-0"></div>
-                  <img
-                    src={artworkUrl}
-                    alt={trophy.pokemonName}
-                    className={`max-h-24 w-auto object-contain transition-transform group-hover:scale-110 drop-shadow-md ${
-                      trophy.unlocked ? '' : 'filter grayscale brightness-[0.25] contrast-200'
-                    }`}
-                  />
-                  {!trophy.unlocked && (
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="p-2 rounded-full bg-slate-900/90 border border-slate-700 text-slate-400">
-                        <Lock className="w-4 h-4" />
-                      </div>
-                    </div>
-                  )}
-                </div>
+                  {/* Card Top: Tier and Status */}
+                  <div className="flex items-center justify-between gap-2 mb-2 relative z-10">
+                    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${tierBadge.bg}`}>
+                      {tierBadge.label}
+                    </span>
 
-                {/* Card Bottom: Title & Condition */}
-                <div className="relative z-10">
-                  <h3 className="text-base font-bold font-display text-white group-hover:text-amber-300 transition-colors">
-                    {trophy.title}
-                  </h3>
-                  <p className="text-xs text-slate-400 mb-2">{trophy.subtitle}</p>
+                    {trophy.unlocked ? (
+                      <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-semibold">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Unlocked</span>
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-[11px] text-slate-500">
+                        <Lock className="w-3 h-3" />
+                        <span>Locked</span>
+                      </span>
+                    )}
+                  </div>
 
-                  <div className="text-[11px] text-slate-300 bg-slate-950/70 border border-slate-800/80 rounded-lg p-2">
-                    <p className="text-slate-400 font-medium mb-1">Requirement: {trophy.condition}</p>
-                    {/* Progress Bar if not unlocked */}
-                    {!trophy.unlocked && trophy.maxProgress > 1 && (
-                      <div className="w-full">
-                        <div className="flex justify-between text-[10px] text-slate-400 mb-1">
-                          <span>Progress</span>
-                          <span>{trophy.progress} / {trophy.maxProgress}</span>
-                        </div>
-                        <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-amber-500 rounded-full transition-all"
-                            style={{ width: `${Math.min(100, (trophy.progress / trophy.maxProgress) * 100)}%` }}
-                          />
+                  {/* Trophy Showcase Artwork */}
+                  <div className="relative my-2 w-full h-28 flex items-center justify-center">
+                    <div className="absolute w-24 h-24 rounded-full bg-slate-800/50 -z-0"></div>
+                    <img
+                      src={artworkUrl}
+                      alt={trophy.pokemonName}
+                      className={`max-h-24 w-auto object-contain transition-transform group-hover:scale-110 drop-shadow-md ${
+                        trophy.unlocked ? '' : 'filter grayscale brightness-[0.25] contrast-200'
+                      }`}
+                    />
+                    {!trophy.unlocked && (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="p-2 rounded-full bg-slate-900/90 border border-slate-700 text-slate-400">
+                          <Lock className="w-4 h-4" />
                         </div>
                       </div>
                     )}
                   </div>
+
+                  {/* Card Bottom: Title & Condition */}
+                  <div className="relative z-10">
+                    <h3 className="text-base font-bold font-display text-white group-hover:text-amber-300 transition-colors">
+                      {trophy.title}
+                    </h3>
+                    <p className="text-xs text-slate-400 mb-2">{trophy.subtitle}</p>
+
+                    <div className="text-[11px] text-slate-300 bg-slate-950/70 border border-slate-800/80 rounded-lg p-2">
+                      <p className="text-slate-400 font-medium mb-1">Requirement: {trophy.condition}</p>
+                      {/* Progress Bar if not unlocked */}
+                      {!trophy.unlocked && trophy.maxProgress > 1 && (
+                        <div className="w-full">
+                          <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                            <span>Progress</span>
+                            <span>{trophy.progress} / {trophy.maxProgress}</span>
+                          </div>
+                          <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-amber-500 rounded-full transition-all"
+                              style={{ width: `${Math.min(100, (trophy.progress / trophy.maxProgress) * 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* View 2: Trophy Road Milestones & Rewards up to 100 Lakh (10M TP) */}
+        {viewMode === 'trophy_road' && (
+          <div className="p-5 overflow-y-auto space-y-3 flex-1 no-scrollbar">
+            <div className="p-3.5 rounded-xl bg-gradient-to-r from-amber-500/20 via-yellow-500/10 to-amber-500/20 border border-amber-500/40 text-xs text-slate-200 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <Gift className="w-5 h-5 text-amber-400 shrink-0" />
+                <div>
+                  <h4 className="font-bold text-white text-sm">100 Lakh Trophy Road (10,000,000 TP Goal)</h4>
+                  <p className="text-[11px] text-slate-400">
+                    Climb through all 9 Pokémon Leagues to unlock legendary avatars, Battle Tokens, master spheres, and celestial titles!
+                  </p>
                 </div>
               </div>
-            );
-          })}
-        </div>
+              <div className="text-right shrink-0">
+                <span className="text-[10px] text-slate-400 block uppercase">Current TP</span>
+                <span className="font-mono text-xs font-black text-amber-300">
+                  {currentTrophyPoints.toLocaleString()} TP
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              {TROPHY_ROAD_REWARDS.map((reward) => {
+                const isReached = currentTrophyPoints >= reward.trophies;
+                return (
+                  <div
+                    key={reward.trophies}
+                    className={`p-3.5 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all ${
+                      isReached
+                        ? 'bg-amber-500/15 border-amber-400/50 shadow-md shadow-amber-950/30'
+                        : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-14 h-12 rounded-xl bg-slate-900 border border-slate-700 flex flex-col items-center justify-center shrink-0">
+                        <span className="text-xs font-black font-mono text-amber-300 leading-tight">
+                          {formatTrophyCount(reward.trophies)}
+                        </span>
+                        <span className="text-[8px] font-bold text-slate-500 uppercase">TP Milestone</span>
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                          <span className="text-xs font-bold text-slate-300 font-mono px-2 py-0.5 rounded-md bg-slate-900 border border-slate-700">
+                            {reward.rankBadge}
+                          </span>
+                          <h4 className="text-sm font-bold font-display text-white truncate">
+                            {reward.rewardTitle}
+                          </h4>
+                          <span className="text-xs font-bold text-amber-400">
+                            +{reward.tokens.toLocaleString()} Tokens
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 line-clamp-1">{reward.description}</p>
+                      </div>
+                    </div>
+
+                    <div className="shrink-0 flex items-center gap-2">
+                      {isReached ? (
+                        <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          Reached
+                        </span>
+                      ) : (
+                        <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-300 border border-amber-500/20 shrink-0">
+                          {reward.trophies.toLocaleString()} TP Required
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* View 3: Training Bounties & Daily Quests */}
+        {viewMode === 'bounties' && (
+          <div className="p-5 overflow-y-auto space-y-3 flex-1 no-scrollbar">
+            <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-slate-300 flex items-center gap-2.5">
+              <Swords className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>
+                Complete daily training bounties across all quiz modes, gym challenges, and 1v1 duels to earn high-tier rewards, Battle Tokens, and rare trainer artifacts!
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {TRAINING_BOUNTIES_REWARDS.map((item) => (
+                <div
+                  key={item.id}
+                  className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800 hover:border-slate-700 transition-all flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="w-7 h-7 rounded-lg bg-slate-900 border border-slate-700 flex items-center justify-center text-xs font-mono font-bold text-amber-300">
+                          {item.day}
+                        </span>
+                        <h4 className="text-xs font-bold font-display text-white">
+                          {item.title}
+                        </h4>
+                      </div>
+
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800">
+                        Day {item.day}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 text-xs text-amber-400 font-bold mb-1.5 flex-wrap">
+                      <span>+{item.tokens.toLocaleString()} Tokens</span>
+                      <span>•</span>
+                      <span>+{item.trophyPointsBonus.toLocaleString()} TP</span>
+                      {item.specialItem && (
+                        <>
+                          <span>•</span>
+                          <span className="text-purple-300 font-medium">{item.specialItem}</span>
+                        </>
+                      )}
+                    </div>
+
+                    <p className="text-xs text-slate-400 leading-relaxed">{item.description}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Detail Modal Overlay for Selected Trophy */}
         <AnimatePresence>

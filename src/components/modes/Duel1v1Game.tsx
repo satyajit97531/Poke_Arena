@@ -18,835 +18,1036 @@ import {
   Sparkles,
   Flame,
   Timer,
+  Send,
+  Coins,
+  RefreshCw,
+  KeyRound,
+  Shield,
+  Smartphone,
+  Radio,
+  Share2,
 } from 'lucide-react';
-import { DuelRoomConfig, GameDifficulty, Pokemon, RegionId } from '../../types/pokemon';
-import { CURATED_POKEMON, getPokemonByRegion } from '../../data/pokemonData';
+import confetti from 'canvas-confetti';
+import { GameDifficulty, RegionId } from '../../types/pokemon';
 import { sound } from '../../utils/audio';
 
 interface Duel1v1GameProps {
   currentTrainerName: string;
   onScoreEarned: (points: number) => void;
   onAdvanceMilestone: () => void;
+  onTokensEarned?: (tokens: number) => void;
+  initialRoomCode?: string | null;
 }
 
-interface RoundScoreBreakdown {
-  playerName: string;
-  isCorrect: boolean;
-  basePoints: number;
-  quickAnswerPoints: number;
-  totalAdded: number;
-  timeTaken: number;
-  timeLeft: number;
-  speedTier: 'instant' | 'fast' | 'moderate' | 'slow' | 'none';
+interface DuelPlayer {
+  id: string;
+  name: string;
+  avatarId: number;
+  score: number;
+  baseScore: number;
+  speedScore: number;
+  answers: boolean[];
+  times: number[];
+}
+
+interface DuelQuestion {
+  targetId: number;
+  targetName: string;
+  displayName: string;
+  types: string[];
+  species: string;
+  height: number;
+  weight: number;
+  moves: string[];
+  artwork: string;
+  options: Array<{ id: number; displayName: string; types: string[] }>;
+  correctOptionId: number;
+}
+
+interface DuelRoomState {
+  code: string;
+  host: DuelPlayer;
+  guest: DuelPlayer | null;
+  rounds: number;
+  timeLimit: number;
+  difficulty: string;
+  region: string;
+  status: 'waiting' | 'in_progress' | 'round_reveal' | 'finished';
+  questions: DuelQuestion[];
+  currentRoundIdx: number;
+  roundStartTime: number;
+  firstAnswerer: { playerId: string; playerName: string; timeTaken: number } | null;
+  roundAnswers: Record<string, {
+    playerId: string;
+    playerName: string;
+    choiceId: number;
+    isCorrect: boolean;
+    timeTaken: number;
+    timeRemaining: number;
+    pointsEarned: number;
+    speedTier: string;
+    isFirst: boolean;
+  }>;
+  lastRoundBreakdown: {
+    firstAnswerer: { playerId: string; playerName: string; timeTaken: number } | null;
+    roundIdx: number;
+    correctPokemon: { id: number; displayName: string; artwork: string; types: string[] };
+    answers: Record<string, {
+      playerName: string;
+      isCorrect: boolean;
+      timeTaken: number;
+      pointsEarned: number;
+      isFirst: boolean;
+    }>;
+  } | null;
+  createdAt: number;
 }
 
 export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
   currentTrainerName,
   onScoreEarned,
   onAdvanceMilestone,
+  onTokensEarned,
+  initialRoomCode,
 }) => {
-  const [stage, setStage] = useState<'create' | 'lobby' | 'battle' | 'results'>('create');
+  // Navigation Tabs in Lobby
+  const [lobbyTab, setLobbyTab] = useState<'matchmake' | 'create' | 'join'>('matchmake');
+
+  // Creation Config
   const [rounds, setRounds] = useState(5);
   const [timeLimit, setTimeLimit] = useState(15);
   const [difficulty, setDifficulty] = useState<GameDifficulty>('easy');
   const [region, setRegion] = useState<RegionId>('all');
-  const [room, setRoom] = useState<DuelRoomConfig | null>(null);
+
+  // Input for entering room code
+  const [inputRoomCode, setInputRoomCode] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
 
-  // Active battle state
-  const [currentRoundIdx, setCurrentRoundIdx] = useState(0);
-  const [activePlayer, setActivePlayer] = useState<'host' | 'guest'>('host');
-  const [guestName, setGuestName] = useState('Challenger Gary');
-  const [options, setOptions] = useState<Pokemon[]>([]);
-  const [selectedOptionId, setSelectedOptionId] = useState<number | null>(null);
-  const [roundAnswered, setRoundAnswered] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(15);
+  // Active Session State
+  const [myPlayerId, setMyPlayerId] = useState<string | null>(null);
+  const [room, setRoom] = useState<DuelRoomState | null>(null);
+  const [selectedChoiceId, setSelectedChoiceId] = useState<number | null>(null);
+  const [hasAnsweredThisRound, setHasAnsweredThisRound] = useState(false);
 
-  // Separate Point Tracking for Player 1 & Player 2
-  // Main Points = Base Points + Quick Answer Points
-  const [p1Score, setP1Score] = useState(0);
-  const [p1BaseScore, setP1BaseScore] = useState(0);
-  const [p1SpeedScore, setP1SpeedScore] = useState(0);
-  const [p1Answers, setP1Answers] = useState<boolean[]>([]);
-  const [p1Times, setP1Times] = useState<number[]>([]);
+  // Polling ref and timers
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [isSearchingMatch, setIsSearchingMatch] = useState(false);
+  const [searchTimer, setSearchTimer] = useState(0);
 
-  const [p2Score, setP2Score] = useState(0);
-  const [p2BaseScore, setP2BaseScore] = useState(0);
-  const [p2SpeedScore, setP2SpeedScore] = useState(0);
-  const [p2Answers, setP2Answers] = useState<boolean[]>([]);
-  const [p2Times, setP2Times] = useState<number[]>([]);
+  // Derive QR Join URL
+  const joinUrl = room
+    ? `${window.location.origin}${window.location.pathname}?duelRoom=${room.code}`
+    : '';
 
-  // Round breakdown banner state
-  const [lastRoundBreakdown, setLastRoundBreakdown] = useState<RoundScoreBreakdown | null>(null);
+  // Calculate Remaining Time from room.roundStartTime
+  const [localTimeRemaining, setLocalTimeRemaining] = useState(15);
 
-  // Live countdown timer ref
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Clear timer helper
-  const clearActiveTimer = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  };
-
-  const handleCreateRoom = () => {
-    sound.playButtonPress();
-    const roomId = 'PKMN-' + Math.floor(1000 + Math.random() * 9000);
-    const pool = getPokemonByRegion(region);
-    const questions = [...pool].sort(() => Math.random() - 0.5).slice(0, rounds);
-
-    const newRoom: DuelRoomConfig = {
-      roomId,
-      hostName: currentTrainerName,
-      guestName: 'Challenger',
-      rounds,
-      timeLimit,
-      difficulty,
-      mode: '1v1',
-      region,
-      questions,
-      hostScores: [],
-      guestScores: [],
-      currentRound: 0,
-      status: 'waiting',
-    };
-
-    setRoom(newRoom);
-    setStage('lobby');
-  };
-
-  const roomShareUrl = room ? `${window.location.origin}${window.location.pathname}?duel=${room.roomId}` : '';
-
-  const handleCopyLink = () => {
-    sound.playButtonPress();
-    navigator.clipboard.writeText(roomShareUrl);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
-  };
-
-  const handleStartBattle = () => {
-    if (!room) return;
-    sound.playTrophyUnlock();
-    setStage('battle');
-    setCurrentRoundIdx(0);
-    setActivePlayer('host');
-    setP1Score(0);
-    setP1BaseScore(0);
-    setP1SpeedScore(0);
-    setP1Answers([]);
-    setP1Times([]);
-
-    setP2Score(0);
-    setP2BaseScore(0);
-    setP2SpeedScore(0);
-    setP2Answers([]);
-    setP2Times([]);
-
-    setLastRoundBreakdown(null);
-    prepareQuestion(room.questions[0]);
-  };
-
-  const prepareQuestion = (target: Pokemon) => {
-    clearActiveTimer();
-    setRoundAnswered(false);
-    setSelectedOptionId(null);
-    setLastRoundBreakdown(null);
-    const roundLimit = room?.timeLimit || 15;
-    setTimeLeft(roundLimit);
-
-    const decoys = CURATED_POKEMON.filter((p) => p.id !== target.id)
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 3);
-    const opts = [target, ...decoys].sort(() => Math.random() - 0.5);
-    setOptions(opts);
-  };
-
-  // Live Timer Countdown Effect
+  // Auto-join from URL parameter if present
   useEffect(() => {
-    if (stage !== 'battle' || roundAnswered || !room) {
-      clearActiveTimer();
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomParam = urlParams.get('duelRoom') || initialRoomCode;
+    if (roomParam && !room) {
+      handleJoinRoom(roomParam.trim().toUpperCase());
+    }
+  }, [initialRoomCode]);
+
+  // Clean up polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, []);
+
+  // Poll active room state
+  useEffect(() => {
+    if (!room?.code) {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
       return;
     }
 
-    timerRef.current = setInterval(() => {
-      setTimeLeft((prev) => {
-        const next = Math.max(0, Math.round((prev - 0.1) * 10) / 10);
-        if (next <= 0) {
-          clearActiveTimer();
-          handleTimeOut();
-          return 0;
+    const fetchRoom = async () => {
+      try {
+        const res = await fetch(`/api/duel/room/${room.code}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.success && data.room) {
+          const updated: DuelRoomState = data.room;
+
+          // If new round index started, reset local choice
+          if (updated.currentRoundIdx !== room.currentRoundIdx) {
+            setSelectedChoiceId(null);
+            setHasAnsweredThisRound(false);
+          }
+
+          setRoom(updated);
+
+          // If game finished, award scores
+          if (updated.status === 'finished' && room.status !== 'finished') {
+            confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
+            sound.playFanfare();
+            const me = updated.host.id === myPlayerId ? updated.host : updated.guest;
+            if (me) {
+              onScoreEarned(me.score);
+              onAdvanceMilestone();
+              if (onTokensEarned) {
+                onTokensEarned(Math.max(50, Math.floor(me.score / 5)));
+              }
+            }
+          }
         }
-        return next;
-      });
-    }, 100);
+      } catch (err) {
+        console.error('Error polling duel room:', err);
+      }
+    };
 
-    return () => clearActiveTimer();
-  }, [stage, roundAnswered, currentRoundIdx, activePlayer, room?.timeLimit]);
+    pollIntervalRef.current = setInterval(fetchRoom, 750);
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, [room?.code, room?.currentRoundIdx, room?.status, myPlayerId]);
 
-  // Handle Timeout when time runs out
-  const handleTimeOut = () => {
-    if (roundAnswered || !room) return;
-    sound.playWrong();
-    setRoundAnswered(true);
-    setSelectedOptionId(null);
+  // Countdown timer when round in progress
+  useEffect(() => {
+    if (room?.status !== 'in_progress' || !room.roundStartTime) return;
 
-    const roundLimit = room.timeLimit || 15;
-    const currentPlayerName = activePlayer === 'host' ? room.hostName : guestName;
+    const timer = setInterval(() => {
+      const elapsed = (Date.now() - room.roundStartTime) / 1000;
+      const left = Math.max(0, Math.ceil(room.timeLimit - elapsed));
+      setLocalTimeRemaining(left);
+    }, 200);
 
-    setLastRoundBreakdown({
-      playerName: currentPlayerName,
-      isCorrect: false,
-      basePoints: 0,
-      quickAnswerPoints: 0,
-      totalAdded: 0,
-      timeTaken: roundLimit,
-      timeLeft: 0,
-      speedTier: 'none',
-    });
+    return () => clearInterval(timer);
+  }, [room?.status, room?.roundStartTime, room?.timeLimit]);
 
-    if (activePlayer === 'host') {
-      setP1Answers((prev) => [...prev, false]);
-      setP1Times((prev) => [...prev, roundLimit]);
+  // Handle Matchmaking timer
+  useEffect(() => {
+    let t: NodeJS.Timeout | null = null;
+    if (isSearchingMatch) {
+      t = setInterval(() => setSearchTimer((s) => s + 1), 1000);
     } else {
-      setP2Answers((prev) => [...prev, false]);
-      setP2Times((prev) => [...prev, roundLimit]);
+      setSearchTimer(0);
+    }
+    return () => {
+      if (t) clearInterval(t);
+    };
+  }, [isSearchingMatch]);
+
+  // 1. Create Room Action
+  const handleCreateRoom = async () => {
+    sound.playClick();
+    setJoinError(null);
+    try {
+      const res = await fetch('/api/duel/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerName: currentTrainerName,
+          rounds,
+          timeLimit,
+          difficulty,
+          region,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setMyPlayerId(data.playerId);
+        setRoom(data.room);
+      } else {
+        setJoinError(data.error || 'Failed to create room.');
+      }
+    } catch (err) {
+      setJoinError('Network error connecting to duel server.');
     }
   };
 
-  // Handle Player Answer Selection with Quicker-Answer Point System
-  const handleSelectAnswer = (poke: Pokemon) => {
-    if (roundAnswered || !room) return;
-    clearActiveTimer();
-    setRoundAnswered(true);
-    setSelectedOptionId(poke.id);
-
-    const currentTarget = room.questions[currentRoundIdx];
-    const isCorrect = poke.id === currentTarget.id;
-    const roundLimit = room.timeLimit || 15;
-    const timeTaken = Math.max(0.1, Math.round((roundLimit - timeLeft) * 10) / 10);
-    const currentPlayerName = activePlayer === 'host' ? room.hostName : guestName;
-
-    if (isCorrect) {
-      sound.playCorrect();
-
-      // 1. Base Points for correct answer (remains constant at 250 PTS)
-      const basePoints = 250;
-
-      // 2. Quick Answer Points calculated separately based on speed:
-      // The quicker the answer (higher remaining time), the more points awarded!
-      const speedRatio = Math.max(0, timeLeft / roundLimit);
-      const maxQuickBonus = 250; // Up to 250 extra points for instantaneous response
-      const quickAnswerPoints = Math.round(speedRatio * maxQuickBonus);
-
-      // 3. Add Quick Answer Points to Base Points to form Main Points
-      const totalAdded = basePoints + quickAnswerPoints;
-
-      let speedTier: 'instant' | 'fast' | 'moderate' | 'slow' = 'slow';
-      if (speedRatio >= 0.75) speedTier = 'instant';
-      else if (speedRatio >= 0.45) speedTier = 'fast';
-      else if (speedRatio >= 0.2) speedTier = 'moderate';
-
-      setLastRoundBreakdown({
-        playerName: currentPlayerName,
-        isCorrect: true,
-        basePoints,
-        quickAnswerPoints,
-        totalAdded,
-        timeTaken,
-        timeLeft,
-        speedTier,
+  // 2. Join Room Action
+  const handleJoinRoom = async (codeToJoin?: string) => {
+    sound.playClick();
+    const targetCode = (codeToJoin || inputRoomCode).trim().toUpperCase();
+    if (!targetCode) {
+      setJoinError('Please enter a valid Room Code (e.g. PKMN-1234)');
+      return;
+    }
+    setJoinError(null);
+    try {
+      const res = await fetch('/api/duel/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomCode: targetCode,
+          playerName: currentTrainerName,
+        }),
       });
-
-      if (activePlayer === 'host') {
-        setP1BaseScore((prev) => prev + basePoints);
-        setP1SpeedScore((prev) => prev + quickAnswerPoints);
-        setP1Score((prev) => prev + totalAdded);
-        setP1Answers((prev) => [...prev, true]);
-        setP1Times((prev) => [...prev, timeTaken]);
+      const data = await res.json();
+      if (data.success) {
+        setMyPlayerId(data.playerId);
+        setRoom(data.room);
       } else {
-        setP2BaseScore((prev) => prev + basePoints);
-        setP2SpeedScore((prev) => prev + quickAnswerPoints);
-        setP2Score((prev) => prev + totalAdded);
-        setP2Answers((prev) => [...prev, true]);
-        setP2Times((prev) => [...prev, timeTaken]);
+        setJoinError(data.error || 'Failed to join room.');
       }
-    } else {
-      sound.playWrong();
-      setLastRoundBreakdown({
-        playerName: currentPlayerName,
-        isCorrect: false,
-        basePoints: 0,
-        quickAnswerPoints: 0,
-        totalAdded: 0,
-        timeTaken,
-        timeLeft,
-        speedTier: 'none',
-      });
-
-      if (activePlayer === 'host') {
-        setP1Answers((prev) => [...prev, false]);
-        setP1Times((prev) => [...prev, timeTaken]);
-      } else {
-        setP2Answers((prev) => [...prev, false]);
-        setP2Times((prev) => [...prev, timeTaken]);
-      }
+    } catch (err) {
+      setJoinError('Network error connecting to duel room.');
     }
   };
 
-  const handleAdvanceTurn = () => {
-    sound.playButtonPress();
-    if (!room) return;
-
-    if (activePlayer === 'host') {
-      // Switch to Guest for same question
-      setActivePlayer('guest');
-      prepareQuestion(room.questions[currentRoundIdx]);
-    } else {
-      // Both answered current round! Advance to next round
-      if (currentRoundIdx + 1 < room.rounds) {
-        const nextIdx = currentRoundIdx + 1;
-        setCurrentRoundIdx(nextIdx);
-        setActivePlayer('host');
-        prepareQuestion(room.questions[nextIdx]);
+  // 3. Random Matchmaking Action
+  const handleRandomMatch = async () => {
+    sound.playClick();
+    setIsSearchingMatch(true);
+    setJoinError(null);
+    try {
+      const res = await fetch('/api/duel/random-match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerName: currentTrainerName,
+          difficulty,
+          region,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setMyPlayerId(data.playerId);
+        setRoom(data.room);
+        if (data.matched) {
+          setIsSearchingMatch(false);
+          sound.playLevelUp();
+        }
       } else {
-        // Battle finished!
-        sound.playTrophyUnlock();
-        setStage('results');
-        onScoreEarned(p1Score + p2Score);
-        onAdvanceMilestone();
+        setIsSearchingMatch(false);
+        setJoinError(data.error || 'Matchmaking error.');
       }
+    } catch (err) {
+      setIsSearchingMatch(false);
+      setJoinError('Network error during matchmaking.');
     }
   };
 
-  // Calculate speed percentage for visual timer
-  const maxLimit = room?.timeLimit || 15;
-  const timePercentage = Math.min(100, Math.max(0, (timeLeft / maxLimit) * 100));
+  // 4. Submit Answer Action
+  const handleSelectAnswer = async (choiceId: number) => {
+    if (!room || room.status !== 'in_progress' || hasAnsweredThisRound || !myPlayerId) return;
 
-  return (
-    <div className="w-full max-w-xl mx-auto flex flex-col items-center">
-      {/* Create Room Stage */}
-      {stage === 'create' && (
-        <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col items-center">
-          <div className="w-12 h-12 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-400 flex items-center justify-center mb-3">
-            <Swords className="w-6 h-6" />
+    sound.playClick();
+    setSelectedChoiceId(choiceId);
+    setHasAnsweredThisRound(true);
+
+    const elapsed = Math.max(0.2, (Date.now() - room.roundStartTime) / 1000);
+    const remaining = Math.max(0, room.timeLimit - elapsed);
+
+    try {
+      const res = await fetch(`/api/duel/room/${room.code}/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerId: myPlayerId,
+          playerName: currentTrainerName,
+          choiceId,
+          timeTaken: Number(elapsed.toFixed(2)),
+          timeRemaining: Number(remaining.toFixed(2)),
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (data.isCorrect) {
+          sound.playCorrect();
+        } else {
+          sound.playWrong();
+        }
+        if (data.room) {
+          setRoom(data.room);
+        }
+      }
+    } catch (err) {
+      console.error('Error submitting answer:', err);
+    }
+  };
+
+  // 5. Leave Battle
+  const handleLeaveRoom = async () => {
+    sound.playClick();
+    if (room?.code) {
+      try {
+        await fetch(`/api/duel/room/${room.code}/leave`, { method: 'POST' });
+      } catch {
+        // ignore
+      }
+    }
+    setRoom(null);
+    setMyPlayerId(null);
+    setSelectedChoiceId(null);
+    setHasAnsweredThisRound(false);
+    setIsSearchingMatch(false);
+  };
+
+  // =========================================================================
+  // VIEW 1: LOBBY (Create, Join, or Find Random Match)
+  // =========================================================================
+  if (!room) {
+    return (
+      <div className="w-full max-w-4xl mx-auto space-y-5 p-3 sm:p-5">
+        {/* Banner */}
+        <div className="p-6 rounded-3xl bg-gradient-to-r from-red-600/20 via-slate-900 to-amber-600/20 border border-red-500/30 text-center relative overflow-hidden shadow-2xl">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-bold uppercase tracking-wider mb-2">
+            <Swords className="w-3.5 h-3.5" />
+            <span>Real-Time Multi-Device 1v1 PvP Arena</span>
           </div>
-
-          <h3 className="text-xl font-black font-display text-white mb-1">
-            Host 1v1 Battle Arena
-          </h3>
-          <p className="text-xs text-slate-400 mb-6 text-center max-w-md">
-            Challenge your rival with live quick-response scoring. The faster you identify the Pokémon, the more bonus speed points you bank into your main score!
+          <h2 className="text-2xl sm:text-4xl font-extrabold font-display text-white tracking-tight">
+            Pokémon Trainer Colosseum
+          </h2>
+          <p className="text-xs sm:text-sm text-slate-400 max-w-xl mx-auto mt-1">
+            Duel rival trainers in real-time across two different devices. Scan the QR code, share your Room Code, or jump straight into Random Matchmaking!
           </p>
+        </div>
 
-          <div className="w-full space-y-4 mb-6">
-            {/* Number of Rounds */}
-            <div>
-              <label className="text-xs font-semibold text-slate-300 block mb-1.5">
-                Number of Rounds: <span className="text-rose-400 font-bold">{rounds} Rounds</span>
-              </label>
-              <div className="grid grid-cols-4 gap-2">
-                {[3, 5, 10, 15].map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => {
-                      sound.playButtonPress();
-                      setRounds(n);
-                    }}
-                    className={`py-2 rounded-xl text-xs font-bold border transition-all ${
-                      rounds === n
-                        ? 'bg-rose-500 text-white border-rose-400 shadow-md shadow-rose-950'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {n} Qs
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Time to Answer in Seconds */}
-            <div>
-              <label className="text-xs font-semibold text-slate-300 block mb-1.5 flex items-center justify-between">
-                <span>Time Per Question: <span className="text-amber-400 font-bold">{timeLimit}s</span></span>
-                <span className="text-[11px] text-cyan-400 font-normal">Quicker answer = More points</span>
-              </label>
-              <div className="grid grid-cols-4 gap-2">
-                {[10, 15, 20, 30].map((sec) => (
-                  <button
-                    key={sec}
-                    type="button"
-                    onClick={() => {
-                      sound.playButtonPress();
-                      setTimeLimit(sec);
-                    }}
-                    className={`py-2 rounded-xl text-xs font-bold border transition-all ${
-                      timeLimit === sec
-                        ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md shadow-amber-950'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {sec}s
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Difficulty */}
-            <div>
-              <label className="text-xs font-semibold text-slate-300 block mb-1.5">
-                Difficulty: <span className="text-cyan-400 font-bold capitalize">{difficulty}</span>
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['easy', 'medium', 'hard'] as const).map((d) => (
-                  <button
-                    key={d}
-                    type="button"
-                    onClick={() => {
-                      sound.playButtonPress();
-                      setDifficulty(d);
-                    }}
-                    className={`py-2 rounded-xl text-xs font-bold uppercase border transition-all ${
-                      difficulty === d
-                        ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-md shadow-cyan-950'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {d}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+        {/* Navigation Tabs */}
+        <div className="flex items-center justify-center p-1.5 rounded-2xl bg-slate-900 border border-slate-800 max-w-md mx-auto">
+          <button
+            id="tab-duel-matchmake"
+            onClick={() => {
+              sound.playClick();
+              setLobbyTab('matchmake');
+            }}
+            className={`flex-1 py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+              lobbyTab === 'matchmake'
+                ? 'bg-gradient-to-r from-amber-500 to-red-500 text-white shadow-lg'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Zap className="w-4 h-4" />
+            <span>Random Match</span>
+          </button>
 
           <button
-            id="btn-generate-1v1-room"
-            onClick={handleCreateRoom}
-            className="w-full py-3 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white font-display font-black text-sm uppercase tracking-wider shadow-lg shadow-rose-500/30 flex items-center justify-center gap-2 transition-all hover:scale-[1.02]"
+            id="tab-duel-create"
+            onClick={() => {
+              sound.playClick();
+              setLobbyTab('create');
+            }}
+            className={`flex-1 py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+              lobbyTab === 'create'
+                ? 'bg-gradient-to-r from-amber-500 to-red-500 text-white shadow-lg'
+                : 'text-slate-400 hover:text-white'
+            }`}
           >
             <QrCode className="w-4 h-4" />
-            <span>Generate QR Challenge & Room</span>
+            <span>Host & QR</span>
+          </button>
+
+          <button
+            id="tab-duel-join"
+            onClick={() => {
+              sound.playClick();
+              setLobbyTab('join');
+            }}
+            className={`flex-1 py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+              lobbyTab === 'join'
+                ? 'bg-gradient-to-r from-amber-500 to-red-500 text-white shadow-lg'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <KeyRound className="w-4 h-4" />
+            <span>Enter Code</span>
           </button>
         </div>
-      )}
 
-      {/* Lobby with Scannable QR Code */}
-      {stage === 'lobby' && room && (
-        <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col items-center text-center">
-          <span className="text-xs uppercase tracking-widest text-slate-400 font-bold mb-1">
-            Challenge Invitation Ready
-          </span>
-          <h3 className="text-2xl font-black font-display text-white mb-2">
-            Room Code: <span className="text-cyan-400 font-mono">{room.roomId}</span>
-          </h3>
-
-          {/* Scannable QR Code Card */}
-          <div className="p-4 bg-white rounded-2xl shadow-xl my-4 flex flex-col items-center">
-            <QRCodeSVG value={roomShareUrl} size={180} level="M" />
-            <span className="text-[10px] text-slate-600 font-mono font-bold mt-2">
-              Scan with camera to accept duel
-            </span>
+        {joinError && (
+          <div className="p-3.5 rounded-xl bg-red-500/15 border border-red-500/40 text-red-300 text-xs text-center font-medium">
+            {joinError}
           </div>
+        )}
 
-          <div className="flex items-center gap-2 mb-5">
+        {/* TAB 1: RANDOM MATCHMAKING */}
+        {lobbyTab === 'matchmake' && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-6 sm:p-8 rounded-3xl bg-slate-900/80 border border-slate-800 text-center space-y-6 max-w-xl mx-auto shadow-xl"
+          >
+            <div className="w-20 h-20 mx-auto rounded-3xl bg-gradient-to-br from-amber-500/20 to-red-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shadow-inner">
+              <Zap className="w-10 h-10" />
+            </div>
+
+            <div>
+              <h3 className="text-xl font-bold font-display text-white">Instant Global Matchmaking</h3>
+              <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                Find another online trainer right now. Fast synchronized 5-round battle with live first-answer indicators!
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 max-w-xs mx-auto text-left">
+              <div>
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                  Difficulty
+                </label>
+                <select
+                  value={difficulty}
+                  onChange={(e) => setDifficulty(e.target.value as GameDifficulty)}
+                  className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl p-2.5 outline-none focus:border-amber-500"
+                >
+                  <option value="easy">Easy (15s)</option>
+                  <option value="medium">Medium (12s)</option>
+                  <option value="hard">Hard (8s)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                  Region Pool
+                </label>
+                <select
+                  value={region}
+                  onChange={(e) => setRegion(e.target.value as RegionId)}
+                  className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl p-2.5 outline-none focus:border-amber-500 capitalize"
+                >
+                  <option value="all">All 9 Regions (1025)</option>
+                  <option value="kanto">Kanto</option>
+                  <option value="johto">Johto</option>
+                  <option value="hoenn">Hoenn</option>
+                  <option value="sinnoh">Sinnoh</option>
+                  <option value="unova">Unova</option>
+                  <option value="kalos">Kalos</option>
+                  <option value="alola">Alola</option>
+                  <option value="galar">Galar</option>
+                  <option value="paldea">Paldea</option>
+                </select>
+              </div>
+            </div>
+
             <button
-              id="btn-copy-1v1-link"
-              onClick={handleCopyLink}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-colors"
+              id="btn-find-random-opponent"
+              onClick={handleRandomMatch}
+              className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-red-500 via-amber-500 to-yellow-500 hover:from-red-600 hover:to-yellow-600 text-white font-extrabold text-base shadow-xl shadow-red-950/40 flex items-center justify-center gap-3 transition-all transform active:scale-95"
             >
-              {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copiedLink ? 'Link Copied!' : 'Copy Direct Link'}</span>
+              <Zap className="w-5 h-5 fill-white" />
+              <span>Find Random Opponent Now</span>
             </button>
-          </div>
+          </motion.div>
+        )}
 
-          {/* Point System Rules Summary */}
-          <div className="w-full bg-slate-950/80 border border-slate-800 rounded-xl p-3.5 text-xs text-left mb-6 space-y-2 text-slate-300">
-            <div className="flex items-center gap-1.5 text-amber-400 font-bold">
-              <Zap className="w-4 h-4 text-amber-400" />
-              <span>1v1 Point System:</span>
-            </div>
-            <div className="text-[11px] text-slate-400 space-y-1 pl-1">
-              <div>• <strong className="text-white">Correct Answer Base:</strong> 250 PTS per correct Pokémon</div>
-              <div>• <strong className="text-amber-300">Quick Answer Speed Bonus:</strong> Up to +250 PTS calculated separately based on how quickly you lock in!</div>
-              <div>• <strong className="text-emerald-400">Main Score:</strong> Base Points + Quick Answer Points = Total Match Points</div>
-            </div>
-          </div>
-
-          <div className="w-full flex gap-3">
-            <button
-              onClick={() => setStage('create')}
-              className="flex-1 py-2.5 rounded-xl bg-slate-800 text-slate-300 font-semibold text-xs hover:bg-slate-700"
-            >
-              Back / Edit Rules
-            </button>
-            <button
-              id="btn-start-1v1-battle"
-              onClick={handleStartBattle}
-              className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 text-white font-display font-black text-xs uppercase tracking-wider shadow-lg shadow-rose-500/30 flex items-center justify-center gap-1.5"
-            >
-              <Play className="w-3.5 h-3.5" />
-              <span>Start Battle Now</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Live 1v1 Battle Arena */}
-      {stage === 'battle' && room && (
-        <div className="w-full flex flex-col items-center">
-          {/* Dual Scoreboard Header with Separate Quick Points & Main Points */}
-          <div className="w-full grid grid-cols-2 gap-3 mb-3">
-            {/* Player 1 Card (Host) */}
-            <div
-              className={`p-3 rounded-xl border flex flex-col items-center transition-all ${
-                activePlayer === 'host'
-                  ? 'bg-rose-500/20 border-rose-400 ring-2 ring-rose-500/40 shadow-lg shadow-rose-950/40'
-                  : 'bg-slate-900/80 border-slate-800 opacity-70'
-              }`}
-            >
-              <div className="flex items-center gap-1.5 mb-1">
-                <span className="text-[10px] uppercase font-bold tracking-wider text-rose-400">
-                  P1: {room.hostName}
-                </span>
-                {activePlayer === 'host' && (
-                  <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-rose-500 text-white font-black animate-pulse">
-                    TURN
-                  </span>
-                )}
-              </div>
-
-              {/* Main Points */}
-              <div className="text-2xl font-black font-display text-white">
-                {p1Score.toLocaleString()} <span className="text-xs text-amber-400 font-bold">PTS</span>
-              </div>
-
-              {/* Separate Base Points & Quick Points pill */}
-              <div className="mt-1 flex items-center gap-1.5 text-[10px] text-slate-400 bg-slate-950/70 px-2 py-0.5 rounded-full border border-slate-800">
-                <span className="text-emerald-400 font-semibold" title="Correct Answer Points">
-                  {p1BaseScore} Base
-                </span>
-                <span>+</span>
-                <span className="text-amber-400 font-bold flex items-center gap-0.5" title="Quick Answer Speed Bonus">
-                  <Zap className="w-2.5 h-2.5 text-amber-400" />
-                  {p1SpeedScore} Quick
-                </span>
-              </div>
-
-              <div className="flex gap-1 mt-1.5">
-                {p1Answers.map((ans, i) => (
-                  <span
-                    key={i}
-                    className={`w-2 h-2 rounded-full ${ans ? 'bg-emerald-400 shadow-sm shadow-emerald-400' : 'bg-rose-500'}`}
-                  />
-                ))}
-              </div>
+        {/* TAB 2: HOST PRIVATE ROOM & QR */}
+        {lobbyTab === 'create' && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-6 sm:p-8 rounded-3xl bg-slate-900/80 border border-slate-800 space-y-6 max-w-xl mx-auto shadow-xl"
+          >
+            <div className="text-center">
+              <h3 className="text-xl font-bold font-display text-white flex items-center justify-center gap-2">
+                <QrCode className="w-5 h-5 text-amber-400" />
+                <span>Host Custom Room & QR Code</span>
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Configure your duel rules and invite a friend on another phone or computer.
+              </p>
             </div>
 
-            {/* Player 2 Card (Challenger) */}
-            <div
-              className={`p-3 rounded-xl border flex flex-col items-center transition-all ${
-                activePlayer === 'guest'
-                  ? 'bg-cyan-500/20 border-cyan-400 ring-2 ring-cyan-500/40 shadow-lg shadow-cyan-950/40'
-                  : 'bg-slate-900/80 border-slate-800 opacity-70'
-              }`}
-            >
-              <div className="flex items-center gap-1.5 mb-1">
-                <span className="text-[10px] uppercase font-bold tracking-wider text-cyan-400">
-                  P2: {guestName}
-                </span>
-                {activePlayer === 'guest' && (
-                  <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-cyan-500 text-slate-950 font-black animate-pulse">
-                    TURN
-                  </span>
-                )}
-              </div>
-
-              {/* Main Points */}
-              <div className="text-2xl font-black font-display text-white">
-                {p2Score.toLocaleString()} <span className="text-xs text-amber-400 font-bold">PTS</span>
-              </div>
-
-              {/* Separate Base Points & Quick Points pill */}
-              <div className="mt-1 flex items-center gap-1.5 text-[10px] text-slate-400 bg-slate-950/70 px-2 py-0.5 rounded-full border border-slate-800">
-                <span className="text-emerald-400 font-semibold" title="Correct Answer Points">
-                  {p2BaseScore} Base
-                </span>
-                <span>+</span>
-                <span className="text-amber-400 font-bold flex items-center gap-0.5" title="Quick Answer Speed Bonus">
-                  <Zap className="w-2.5 h-2.5 text-amber-400" />
-                  {p2SpeedScore} Quick
-                </span>
-              </div>
-
-              <div className="flex gap-1 mt-1.5">
-                {p2Answers.map((ans, i) => (
-                  <span
-                    key={i}
-                    className={`w-2 h-2 rounded-full ${ans ? 'bg-emerald-400 shadow-sm shadow-emerald-400' : 'bg-rose-500'}`}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Question Stage Card */}
-          <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col items-center mb-3 relative overflow-hidden">
-            {/* Live Countdown & Speed Bonus Bar */}
-            <div className="w-full mb-3">
-              <div className="flex items-center justify-between text-xs mb-1">
-                <div className="flex items-center gap-1 text-slate-400 font-medium">
-                  <Timer className={`w-3.5 h-3.5 ${timeLeft <= 3 ? 'text-rose-400 animate-spin' : 'text-cyan-400'}`} />
-                  <span>Time Remaining:</span>
-                  <span
-                    className={`font-mono font-bold ${
-                      timeLeft <= 3 ? 'text-rose-400 text-sm animate-pulse' : 'text-white'
-                    }`}
-                  >
-                    {timeLeft.toFixed(1)}s
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-1 text-[11px]">
-                  <Zap className="w-3 h-3 text-amber-400" />
-                  <span className="text-slate-400">Potential Quick Bonus:</span>
-                  <span className="font-mono font-bold text-amber-300">
-                    +{Math.round((timeLeft / maxLimit) * 250)} PTS
-                  </span>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                  Rounds
+                </label>
+                <div className="flex gap-2">
+                  {[5, 10, 15].map((r) => (
+                    <button
+                      key={r}
+                      onClick={() => setRounds(r)}
+                      className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${
+                        rounds === r
+                          ? 'bg-amber-500/20 border-amber-400 text-amber-300'
+                          : 'bg-slate-950 border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      {r} Qs
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Animated Progress Bar */}
-              <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
-                <div
-                  className={`h-full transition-all duration-100 ${
-                    timePercentage > 60
-                      ? 'bg-gradient-to-r from-emerald-500 to-cyan-500'
-                      : timePercentage > 30
-                      ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
-                      : 'bg-gradient-to-r from-rose-500 to-red-600'
-                  }`}
-                  style={{ width: `${timePercentage}%` }}
-                />
+              <div>
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                  Time Limit
+                </label>
+                <div className="flex gap-2">
+                  {[10, 15, 20].map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setTimeLimit(s)}
+                      className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${
+                        timeLimit === s
+                          ? 'bg-amber-500/20 border-amber-400 text-amber-300'
+                          : 'bg-slate-950 border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      {s}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                  Difficulty
+                </label>
+                <select
+                  value={difficulty}
+                  onChange={(e) => setDifficulty(e.target.value as GameDifficulty)}
+                  className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl p-2.5 outline-none focus:border-amber-500"
+                >
+                  <option value="easy">Easy (Classic Options)</option>
+                  <option value="medium">Medium (Close Decoys)</option>
+                  <option value="hard">Hard (Fast Pace)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                  Pokémon Pool
+                </label>
+                <select
+                  value={region}
+                  onChange={(e) => setRegion(e.target.value as RegionId)}
+                  className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl p-2.5 outline-none focus:border-amber-500 capitalize"
+                >
+                  <option value="all">All 9 Regions (1025)</option>
+                  <option value="kanto">Kanto</option>
+                  <option value="johto">Johto</option>
+                  <option value="hoenn">Hoenn</option>
+                  <option value="sinnoh">Sinnoh</option>
+                  <option value="unova">Unova</option>
+                  <option value="kalos">Kalos</option>
+                  <option value="alola">Alola</option>
+                  <option value="galar">Galar</option>
+                  <option value="paldea">Paldea</option>
+                </select>
               </div>
             </div>
 
-            <span className="text-[11px] uppercase tracking-widest text-slate-400 font-bold mb-1">
-              Round {currentRoundIdx + 1} of {room.rounds} • {activePlayer === 'host' ? room.hostName : guestName}&apos;s Turn
-            </span>
+            <button
+              id="btn-create-duel-room"
+              onClick={handleCreateRoom}
+              className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-red-500 via-amber-500 to-yellow-500 hover:from-red-600 hover:to-yellow-600 text-white font-extrabold text-base shadow-xl shadow-red-950/40 flex items-center justify-center gap-3 transition-all transform active:scale-95"
+            >
+              <QrCode className="w-5 h-5" />
+              <span>Create Battle Room & Generate QR</span>
+            </button>
+          </motion.div>
+        )}
 
-            {/* Silhouette or Revealed Target */}
-            <div className="w-36 h-36 flex items-center justify-center my-2 relative">
-              <img
-                src={room.questions[currentRoundIdx].artwork}
-                alt="Mystery Pokemon"
-                className={`max-h-32 w-auto object-contain drop-shadow-xl select-none ${
-                  roundAnswered ? 'pokemon-revealed' : 'pokemon-silhouette'
-                }`}
+        {/* TAB 3: ENTER ROOM CODE */}
+        {lobbyTab === 'join' && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-6 sm:p-8 rounded-3xl bg-slate-900/80 border border-slate-800 text-center space-y-6 max-w-xl mx-auto shadow-xl"
+          >
+            <div className="w-16 h-16 mx-auto rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center text-amber-400">
+              <Smartphone className="w-8 h-8" />
+            </div>
+
+            <div>
+              <h3 className="text-xl font-bold font-display text-white">Join with Room Code</h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Enter the 4-digit or custom Room Code shown on your rival's screen.
+              </p>
+            </div>
+
+            <div className="max-w-xs mx-auto">
+              <input
+                id="input-room-code"
+                type="text"
+                placeholder="e.g. PKMN-1234"
+                value={inputRoomCode}
+                onChange={(e) => setInputRoomCode(e.target.value.toUpperCase())}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleJoinRoom();
+                }}
+                className="w-full bg-slate-950 border-2 border-slate-700 focus:border-amber-500 rounded-2xl py-3.5 px-4 text-center text-lg font-mono font-bold tracking-widest text-white uppercase outline-none shadow-inner"
               />
             </div>
 
-            {roundAnswered && (
-              <h4 className="text-lg font-black font-display text-white">
-                {room.questions[currentRoundIdx].displayName}
-              </h4>
-            )}
-
-            {/* Separate Points Breakdown Banner */}
-            {roundAnswered && lastRoundBreakdown && (
-              <motion.div
-                initial={{ opacity: 0, y: 8, scale: 0.96 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                className={`w-full mt-3 p-3.5 rounded-xl border ${
-                  lastRoundBreakdown.isCorrect
-                    ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300'
-                    : 'bg-rose-500/10 border-rose-500/40 text-rose-300'
-                }`}
-              >
-                {lastRoundBreakdown.isCorrect ? (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-black uppercase tracking-wide flex items-center gap-1.5 text-emerald-400">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                        Correct Pokémon Identified!
-                      </span>
-                      <span className="text-xs font-mono font-bold text-cyan-400 bg-slate-950/80 px-2 py-0.5 rounded-full border border-slate-800">
-                        Answered in {lastRoundBreakdown.timeTaken.toFixed(1)}s
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div className="bg-slate-950/70 p-2 rounded-lg border border-slate-800 text-left">
-                        <span className="text-[10px] text-slate-400 block">Base Points (Correct)</span>
-                        <span className="text-sm font-black font-mono text-white">
-                          +{lastRoundBreakdown.basePoints} PTS
-                        </span>
-                      </div>
-                      <div className="bg-amber-500/10 p-2 rounded-lg border border-amber-500/30 text-left">
-                        <span className="text-[10px] text-amber-400 font-semibold block flex items-center gap-1">
-                          <Zap className="w-3 h-3 text-amber-400" />
-                          Quick Answer Points
-                        </span>
-                        <span className="text-sm font-black font-mono text-amber-300">
-                          +{lastRoundBreakdown.quickAnswerPoints} PTS
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between pt-1 border-t border-slate-800/80">
-                      <span className="text-xs text-slate-300 font-medium">Added to Main Points:</span>
-                      <span className="text-base font-black font-display font-mono text-amber-400">
-                        +{lastRoundBreakdown.totalAdded} PTS
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold flex items-center gap-1.5 text-rose-400">
-                      <XCircle className="w-4 h-4 text-rose-400" />
-                      {lastRoundBreakdown.timeTaken >= maxLimit ? "Time Expired!" : "Incorrect Guess"}
-                    </span>
-                    <span className="text-slate-400 font-mono text-[11px]">
-                      Base: +0 • Quick: +0 = +0 PTS
-                    </span>
-                  </div>
-                )}
-              </motion.div>
-            )}
-          </div>
-
-          {/* 4 Choices */}
-          <div className="w-full grid grid-cols-2 gap-2.5 mb-4">
-            {options.map((opt) => {
-              const isCorrect = opt.id === room.questions[currentRoundIdx].id;
-              const isSelected = selectedOptionId === opt.id;
-
-              let btnClasses = 'bg-slate-900/90 border-slate-800 hover:border-slate-700 text-slate-200';
-              if (roundAnswered) {
-                if (isCorrect) {
-                  btnClasses = 'bg-emerald-500/20 border-emerald-400 text-emerald-300 font-bold shadow-md shadow-emerald-950';
-                } else if (isSelected) {
-                  btnClasses = 'bg-rose-500/20 border-rose-500 text-rose-300 font-bold';
-                } else {
-                  btnClasses = 'bg-slate-950/40 border-slate-900 opacity-40 text-slate-500';
-                }
-              }
-
-              return (
-                <button
-                  key={opt.id}
-                  disabled={roundAnswered}
-                  onClick={() => {
-                    sound.playButtonPress();
-                    handleSelectAnswer(opt);
-                  }}
-                  className={`p-3 rounded-xl border flex items-center justify-between transition-all ${btnClasses}`}
-                >
-                  <span className="text-sm font-bold font-display">{opt.displayName}</span>
-                  {roundAnswered && isCorrect && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
-                  {roundAnswered && isSelected && !isCorrect && <XCircle className="w-4 h-4 text-rose-400" />}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Advance Turn Button */}
-          {roundAnswered && (
             <button
-              onClick={handleAdvanceTurn}
-              className="py-2.5 px-6 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 text-white font-display font-bold text-sm flex items-center gap-2 shadow-lg shadow-rose-500/30 hover:scale-105 transition-all"
+              id="btn-join-duel-room"
+              onClick={() => handleJoinRoom()}
+              className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-extrabold text-base shadow-xl shadow-emerald-950/40 flex items-center justify-center gap-2 transition-all transform active:scale-95"
             >
-              <span>{activePlayer === 'host' ? `Pass Turn to ${guestName}` : 'Advance to Next Round'}</span>
-              <ArrowRight className="w-4 h-4" />
+              <Swords className="w-5 h-5" />
+              <span>Connect & Enter Battle</span>
             </button>
+          </motion.div>
+        )}
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // VIEW 2: WAITING LOBBY (Host created room or waiting for random match)
+  // =========================================================================
+  if (room.status === 'waiting') {
+    return (
+      <div className="w-full max-w-xl mx-auto p-4 sm:p-6 space-y-6">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="p-6 sm:p-8 rounded-3xl bg-slate-900 border border-slate-800 text-center space-y-6 shadow-2xl"
+        >
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-bold uppercase tracking-wider animate-pulse">
+            <Radio className="w-3.5 h-3.5" />
+            <span>Waiting for Opponent to Connect</span>
+          </div>
+
+          <div>
+            <span className="text-xs text-slate-400 block mb-1">Your Battle Room Code:</span>
+            <div className="inline-flex items-center gap-3 px-5 py-2.5 rounded-2xl bg-slate-950 border-2 border-amber-500/50 shadow-inner">
+              <span className="text-2xl sm:text-3xl font-mono font-black text-amber-300 tracking-wider">
+                {room.code}
+              </span>
+              <button
+                onClick={() => {
+                  sound.playClick();
+                  navigator.clipboard.writeText(room.code);
+                  setCopiedLink(true);
+                  setTimeout(() => setCopiedLink(false), 2000);
+                }}
+                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300"
+                title="Copy Room Code"
+              >
+                {copiedLink ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          {/* QR Code */}
+          <div className="p-4 rounded-2xl bg-white w-fit mx-auto shadow-2xl border-4 border-slate-800">
+            <QRCodeSVG value={joinUrl || room.code} size={180} level="H" includeMargin={false} />
+          </div>
+
+          <p className="text-xs text-slate-400 max-w-sm mx-auto">
+            Scan this QR code with any smartphone camera, or enter room code <strong className="text-white font-mono">{room.code}</strong> on another device to play against each other in real-time!
+          </p>
+
+          <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 text-xs text-slate-400 flex items-center justify-between">
+            <span>Rounds: <strong className="text-white">{room.rounds}</strong></span>
+            <span>Time: <strong className="text-white">{room.timeLimit}s</strong></span>
+            <span>Pool: <strong className="text-white capitalize">{room.region}</strong></span>
+          </div>
+
+          <div className="flex gap-3">
+            <button
+              onClick={() => {
+                sound.playClick();
+                navigator.clipboard.writeText(joinUrl);
+                setCopiedLink(true);
+                setTimeout(() => setCopiedLink(false), 2000);
+              }}
+              className="flex-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold flex items-center justify-center gap-2 border border-slate-700 transition-colors"
+            >
+              <Share2 className="w-4 h-4" />
+              <span>{copiedLink ? 'Link Copied!' : 'Copy Direct Link'}</span>
+            </button>
+
+            <button
+              onClick={handleLeaveRoom}
+              className="py-3 px-5 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs font-bold border border-red-500/30 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // VIEW 3: MATCH FINISHED SUMMARY
+  // =========================================================================
+  if (room.status === 'finished') {
+    const isHost = room.host.id === myPlayerId;
+    const me = isHost ? room.host : room.guest;
+    const opponent = isHost ? room.guest : room.host;
+    const isWinner = me && opponent && me.score > opponent.score;
+    const isDraw = me && opponent && me.score === opponent.score;
+
+    return (
+      <div className="w-full max-w-xl mx-auto p-4 sm:p-6 space-y-6">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="p-6 sm:p-8 rounded-3xl bg-slate-900 border border-slate-800 text-center space-y-6 shadow-2xl relative overflow-hidden"
+        >
+          {/* Header Banner */}
+          <div className="space-y-2">
+            <div className="text-4xl sm:text-5xl select-none">
+              {isWinner ? '🏆' : isDraw ? '🤝' : '⚔️'}
+            </div>
+            <h2 className={`text-2xl sm:text-3xl font-black font-display tracking-tight ${
+              isWinner ? 'text-amber-300' : isDraw ? 'text-slate-300' : 'text-rose-400'
+            }`}>
+              {isWinner ? 'COLOSSEUM VICTORY!' : isDraw ? 'HONORABLE DRAW!' : 'BATTLE DEFEAT'}
+            </h2>
+            <p className="text-xs text-slate-400">
+              {isWinner
+                ? `Sensational duel! You triumphed over ${opponent?.name || 'your rival'}!`
+                : isDraw
+                ? 'Dead heat! Both trainers demonstrated exceptional Pokémon acumen!'
+                : `A valiant effort against ${opponent?.name || 'your rival'}. Train hard and rematch!`}
+            </p>
+          </div>
+
+          {/* Head-to-head Score Comparison Card */}
+          <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 grid grid-cols-2 gap-4 divide-x divide-slate-800">
+            <div className="text-center space-y-1">
+              <span className="text-[11px] font-bold text-blue-400 uppercase tracking-wider block">
+                {me?.name || 'You'} (YOU)
+              </span>
+              <div className="text-3xl font-mono font-black text-white">
+                {me?.score || 0}
+              </div>
+              <div className="text-[10px] text-slate-400">
+                Base: {me?.baseScore || 0} • Speed: {me?.speedScore || 0}
+              </div>
+            </div>
+
+            <div className="text-center space-y-1">
+              <span className="text-[11px] font-bold text-red-400 uppercase tracking-wider block">
+                {opponent?.name || 'Rival'}
+              </span>
+              <div className="text-3xl font-mono font-black text-white">
+                {opponent?.score || 0}
+              </div>
+              <div className="text-[10px] text-slate-400">
+                Base: {opponent?.baseScore || 0} • Speed: {opponent?.speedScore || 0}
+              </div>
+            </div>
+          </div>
+
+          {/* Rewards Earned Callout */}
+          <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-yellow-500/10 to-amber-500/10 border border-amber-500/30 flex items-center justify-around text-xs">
+            <div className="flex items-center gap-2">
+              <Trophy className="w-4 h-4 text-amber-400" />
+              <span>+{me?.score || 0} Trophy Points</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Coins className="w-4 h-4 text-amber-400" />
+              <span>+{Math.max(50, Math.floor((me?.score || 0) / 5))} Battle Tokens</span>
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex gap-3">
+            <button
+              onClick={handleLeaveRoom}
+              className="flex-1 py-3.5 px-4 rounded-2xl bg-gradient-to-r from-amber-500 to-red-500 hover:from-amber-600 hover:to-red-600 text-white font-extrabold text-xs sm:text-sm shadow-xl shadow-red-950/40 flex items-center justify-center gap-2 transition-all transform active:scale-95"
+            >
+              <Swords className="w-4 h-4" />
+              <span>Return to Arena Lobby</span>
+            </button>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // VIEW 4: ACTIVE BATTLE (In Progress or Round Reveal)
+  // =========================================================================
+  const curQ = room.questions[room.currentRoundIdx];
+  const isHost = room.host.id === myPlayerId;
+  const myPlayer = isHost ? room.host : room.guest;
+  const rivalPlayer = isHost ? room.guest : room.host;
+  const myAnswer = myPlayerId ? room.roundAnswers[myPlayerId] : null;
+  const isReveal = room.status === 'round_reveal';
+
+  return (
+    <div className="w-full max-w-4xl mx-auto space-y-4 p-3 sm:p-5 select-none">
+      {/* Head-to-Head Live Scoreboard Header */}
+      <div className="p-4 rounded-3xl bg-slate-900 border border-slate-800 flex items-center justify-between shadow-2xl relative overflow-hidden">
+        {/* Host Info */}
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500/30 to-indigo-600/30 border border-blue-500/50 flex items-center justify-center overflow-hidden">
+            <img
+              src={`https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${room.host.avatarId}.png`}
+              alt={room.host.name}
+              className="w-10 h-10 object-contain"
+            />
+          </div>
+          <div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-bold text-white truncate max-w-[100px] sm:max-w-[140px]">
+                {room.host.name}
+              </span>
+              {isHost && (
+                <span className="text-[10px] px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30">
+                  YOU
+                </span>
+              )}
+            </div>
+            <div className="text-lg sm:text-xl font-mono font-black text-amber-300">
+              {room.host.score} <span className="text-[10px] text-slate-400 font-normal">pts</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Center: Round & Sync Timer */}
+        <div className="text-center px-2">
+          <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+            Round {room.currentRoundIdx + 1} / {room.rounds}
+          </div>
+          <div className={`text-2xl sm:text-3xl font-mono font-black ${
+            localTimeRemaining <= 3 ? 'text-red-500 animate-ping' : 'text-white'
+          }`}>
+            {isReveal ? 'REVEAL' : `${localTimeRemaining}s`}
+          </div>
+        </div>
+
+        {/* Rival Info */}
+        <div className="flex items-center gap-3 text-right">
+          <div>
+            <div className="flex items-center justify-end gap-1.5">
+              {!isHost && (
+                <span className="text-[10px] px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30">
+                  YOU
+                </span>
+              )}
+              <span className="text-xs font-bold text-white truncate max-w-[100px] sm:max-w-[140px]">
+                {room.guest?.name || 'Rival'}
+              </span>
+            </div>
+            <div className="text-lg sm:text-xl font-mono font-black text-amber-300">
+              {room.guest?.score || 0} <span className="text-[10px] text-slate-400 font-normal">pts</span>
+            </div>
+          </div>
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-red-500/30 to-amber-600/30 border border-red-500/50 flex items-center justify-center overflow-hidden">
+            <img
+              src={`https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${room.guest?.avatarId || 6}.png`}
+              alt={room.guest?.name || 'Rival'}
+              className="w-10 h-10 object-contain"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Real-time "Who Answered First" Alert Banner */}
+      <AnimatePresence>
+        {room.firstAnswerer && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className={`p-3 rounded-2xl text-xs font-bold flex items-center justify-between border shadow-lg ${
+              room.firstAnswerer.playerId === myPlayerId
+                ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                : 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 fill-current" />
+              <span>
+                {room.firstAnswerer.playerId === myPlayerId
+                  ? `⚡ You answered first in ${room.firstAnswerer.timeTaken}s! (+150 Quick Reflex Bonus)`
+                  : `⚡ ${room.firstAnswerer.playerName} locked in first in ${room.firstAnswerer.timeTaken}s!`}
+              </span>
+            </div>
+            <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-slate-900/60 border border-white/10">
+              First Buzzer
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Main Question Stage */}
+      <div className="p-6 rounded-3xl bg-slate-900/90 border border-slate-800 text-center space-y-5 shadow-2xl relative">
+        {/* Silhouette or Revealed Pokémon */}
+        <div className="relative w-48 h-48 sm:w-56 sm:h-56 mx-auto flex items-center justify-center">
+          <img
+            src={curQ.artwork}
+            alt={curQ.displayName}
+            className={`w-full h-full object-contain transition-all duration-500 ${
+              isReveal ? 'brightness-100 drop-shadow-2xl scale-105' : 'brightness-0 contrast-200 opacity-90'
+            }`}
+          />
+
+          {isReveal && (
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              className="absolute -bottom-2 px-4 py-1 rounded-full bg-slate-950/90 border border-amber-500/40 text-amber-300 font-display font-extrabold text-sm sm:text-base shadow-xl"
+            >
+              #{curQ.targetId} {curQ.displayName}
+            </motion.div>
           )}
         </div>
-      )}
 
-      {/* Results Celebration with Full Breakdown */}
-      {stage === 'results' && room && (
-        <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-2xl flex flex-col items-center text-center">
-          <div className="w-16 h-16 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center mb-3">
-            <Trophy className="w-8 h-8" />
-          </div>
-
-          <span className="text-xs uppercase tracking-widest text-slate-400 font-bold mb-1">
-            1v1 Match Concluded
+        {/* Clues */}
+        <div className="flex items-center justify-center gap-2 flex-wrap text-xs">
+          {curQ.types.map((t) => (
+            <span
+              key={t}
+              className="px-3 py-1 rounded-full bg-slate-800 text-slate-200 border border-slate-700 capitalize font-medium"
+            >
+              {t} Type
+            </span>
+          ))}
+          <span className="px-3 py-1 rounded-full bg-slate-800/80 text-slate-400 border border-slate-700">
+            {curQ.species}
           </span>
-
-          <h3 className="text-3xl font-black font-display text-white mb-2">
-            {p1Score > p2Score ? `${room.hostName} Wins!` : p2Score > p1Score ? `${guestName} Wins!` : "It's a Tie!"}
-          </h3>
-
-          {/* Detailed Side-by-Side Breakdown Cards */}
-          <div className="w-full grid grid-cols-2 gap-3 my-4">
-            {/* Host Final Card */}
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex flex-col items-center">
-              <span className="text-xs text-rose-400 font-bold mb-1">{room.hostName}</span>
-              <span className="text-3xl font-black font-display text-white mb-2 font-mono">
-                {p1Score.toLocaleString()} <span className="text-xs text-amber-400">PTS</span>
-              </span>
-
-              <div className="w-full space-y-1.5 text-left text-[11px] pt-2 border-t border-slate-800">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Correct Base:</span>
-                  <span className="font-bold text-white font-mono">+{p1BaseScore} PTS</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-amber-400 flex items-center gap-0.5">
-                    <Zap className="w-2.5 h-2.5 text-amber-400" /> Quick Bonus:
-                  </span>
-                  <span className="font-bold text-amber-300 font-mono">+{p1SpeedScore} PTS</span>
-                </div>
-                <div className="flex justify-between text-slate-500">
-                  <span>Avg Response:</span>
-                  <span className="font-mono">
-                    {p1Times.length > 0
-                      ? `${(p1Times.reduce((a, b) => a + b, 0) / p1Times.length).toFixed(1)}s`
-                      : '-'}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Challenger Final Card */}
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex flex-col items-center">
-              <span className="text-xs text-cyan-400 font-bold mb-1">{guestName}</span>
-              <span className="text-3xl font-black font-display text-white mb-2 font-mono">
-                {p2Score.toLocaleString()} <span className="text-xs text-amber-400">PTS</span>
-              </span>
-
-              <div className="w-full space-y-1.5 text-left text-[11px] pt-2 border-t border-slate-800">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Correct Base:</span>
-                  <span className="font-bold text-white font-mono">+{p2BaseScore} PTS</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-amber-400 flex items-center gap-0.5">
-                    <Zap className="w-2.5 h-2.5 text-amber-400" /> Quick Bonus:
-                  </span>
-                  <span className="font-bold text-amber-300 font-mono">+{p2SpeedScore} PTS</span>
-                </div>
-                <div className="flex justify-between text-slate-500">
-                  <span>Avg Response:</span>
-                  <span className="font-mono">
-                    {p2Times.length > 0
-                      ? `${(p2Times.reduce((a, b) => a + b, 0) / p2Times.length).toFixed(1)}s`
-                      : '-'}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <button
-            onClick={() => setStage('create')}
-            className="py-2.5 px-6 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 text-white font-display font-bold text-sm shadow-lg shadow-rose-500/30 hover:scale-105 transition-all"
-          >
-            Rematch / New Challenge
-          </button>
         </div>
-      )}
+
+        {/* 4 Options Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl mx-auto pt-2">
+          {curQ.options.map((opt) => {
+            const isSelected = selectedChoiceId === opt.id;
+            const isCorrect = opt.id === curQ.correctOptionId;
+
+            let btnClass = 'bg-slate-950/80 border-slate-800 text-slate-200 hover:border-amber-500/50';
+
+            if (isReveal) {
+              if (isCorrect) {
+                btnClass = 'bg-emerald-500/20 border-emerald-400 text-emerald-300 font-black shadow-lg shadow-emerald-950/40';
+              } else if (isSelected) {
+                btnClass = 'bg-red-500/20 border-red-400 text-red-300 line-through';
+              } else {
+                btnClass = 'bg-slate-950/40 border-slate-800/60 opacity-40 text-slate-500';
+              }
+            } else if (isSelected) {
+              btnClass = 'bg-amber-500/20 border-amber-400 text-amber-300 font-bold';
+            }
+
+            return (
+              <button
+                key={opt.id}
+                id={`duel-option-${opt.id}`}
+                disabled={hasAnsweredThisRound || isReveal}
+                onClick={() => handleSelectAnswer(opt.id)}
+                className={`p-4 rounded-2xl border text-sm sm:text-base font-medium flex items-center justify-between transition-all transform active:scale-98 ${btnClass}`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <span className="w-7 h-7 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center text-xs font-mono font-bold text-slate-400">
+                    #{opt.id}
+                  </span>
+                  <span className="font-bold">{opt.displayName}</span>
+                </div>
+
+                {isReveal && isCorrect && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />}
+                {isReveal && !isCorrect && isSelected && <XCircle className="w-5 h-5 text-red-400 shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Live Status indicator */}
+        <div className="text-xs text-slate-400 pt-2 flex items-center justify-center gap-3">
+          {hasAnsweredThisRound && !isReveal && (
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
+              <Check className="w-3.5 h-3.5" />
+              <span>You locked in! Waiting for {rivalPlayer?.name || 'rival'} to answer...</span>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 };
