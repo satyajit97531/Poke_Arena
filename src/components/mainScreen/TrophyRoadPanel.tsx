@@ -23,13 +23,7 @@ export const TrophyRoadPanel: React.FC<TrophyRoadPanelProps> = ({
   const currentProgress = Math.min(100, Math.max(0, ((currentTP - prevMilestone.trophies) / span) * 100));
 
   return (
-    <div
-      onClick={() => {
-        sound.playButtonPress();
-        onOpenTrophyRoad();
-      }}
-      className="w-full bg-slate-900/90 backdrop-blur-md border border-amber-500/30 hover:border-amber-400/60 rounded-2xl p-4 shadow-xl flex flex-col gap-3 transition-all cursor-pointer hover:scale-[1.01] active:scale-[0.99] group"
-    >
+    <div className="w-full bg-slate-900/90 backdrop-blur-md border border-amber-500/30 rounded-2xl p-4 shadow-xl flex flex-col gap-3 transition-all hover:border-amber-400/50">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
         <div className="flex items-center gap-2">
@@ -37,7 +31,7 @@ export const TrophyRoadPanel: React.FC<TrophyRoadPanelProps> = ({
             <Trophy className="w-4 h-4 fill-slate-950" />
           </div>
           <div>
-            <h3 className="text-xs font-black font-display text-white uppercase tracking-wider group-hover:text-amber-300 transition-colors">
+            <h3 className="text-xs font-black font-display text-white uppercase tracking-wider">
               Trophy Road
             </h3>
             <p className="text-[10px] text-amber-400/90 font-medium">100 Lakh Goal (10M TP)</p>
@@ -77,14 +71,20 @@ export const TrophyRoadPanel: React.FC<TrophyRoadPanelProps> = ({
         </div>
       </div>
 
-      {/* Action Prompt */}
-      <div className="flex items-center justify-between pt-1 text-xs text-amber-400 font-bold group-hover:text-amber-300">
-        <span className="flex items-center gap-1">
-          <Sparkles className="w-3.5 h-3.5" />
-          <span>Inspect 100 Lakh Trophy Road</span>
-        </span>
-        <ChevronRight className="w-4 h-4 transform group-hover:translate-x-1 transition-transform" />
-      </div>
+      {/* Only this button opens the 1 Lakh Trophy Road */}
+      <button
+        id="btn-inspect-trophy-road"
+        type="button"
+        onClick={() => {
+          sound.playButtonPress();
+          onOpenTrophyRoad();
+        }}
+        className="w-full py-2.5 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-xs font-bold flex items-center justify-center gap-1.5 transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer shadow-md shadow-amber-950/20"
+      >
+        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+        <span>Inspect the 1 Lakh Trophy Road</span>
+        <ChevronRight className="w-4 h-4 text-amber-400" />
+      </button>
     </div>
   );
 };

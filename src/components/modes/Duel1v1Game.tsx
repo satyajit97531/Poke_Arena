@@ -26,9 +26,11 @@ import {
   Smartphone,
   Radio,
   Share2,
+  Skull,
+  Search,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { GameDifficulty, RegionId } from '../../types/pokemon';
+import { BattleRecord, GameDifficulty, RegionId } from '../../types/pokemon';
 import { sound } from '../../utils/audio';
 
 interface Duel1v1GameProps {
@@ -36,6 +38,7 @@ interface Duel1v1GameProps {
   onScoreEarned: (points: number) => void;
   onAdvanceMilestone: () => void;
   onTokensEarned?: (tokens: number) => void;
+  onBattleFinished?: (battle: Omit<BattleRecord, 'id' | 'timestamp'>) => void;
   initialRoomCode?: string | null;
 }
 
@@ -108,6 +111,7 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
   onScoreEarned,
   onAdvanceMilestone,
   onTokensEarned,
+  onBattleFinished,
   initialRoomCode,
 }) => {
   // Navigation Tabs in Lobby
@@ -129,6 +133,7 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
   const [room, setRoom] = useState<DuelRoomState | null>(null);
   const [selectedChoiceId, setSelectedChoiceId] = useState<number | null>(null);
   const [hasAnsweredThisRound, setHasAnsweredThisRound] = useState(false);
+  const [typedGuess, setTypedGuess] = useState('');
 
   // Polling ref and timers
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -181,20 +186,37 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
           if (updated.currentRoundIdx !== room.currentRoundIdx) {
             setSelectedChoiceId(null);
             setHasAnsweredThisRound(false);
+            setTypedGuess('');
           }
 
           setRoom(updated);
 
-          // If game finished, award scores
+          // If game finished, award scores & log battle history
           if (updated.status === 'finished' && room.status !== 'finished') {
             confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
             sound.playFanfare();
             const me = updated.host.id === myPlayerId ? updated.host : updated.guest;
+            const opponent = updated.host.id === myPlayerId ? updated.guest : updated.host;
             if (me) {
               onScoreEarned(me.score);
               onAdvanceMilestone();
+              const tokens = Math.max(50, Math.floor(me.score / 5));
               if (onTokensEarned) {
-                onTokensEarned(Math.max(50, Math.floor(me.score / 5)));
+                onTokensEarned(tokens);
+              }
+              if (onBattleFinished) {
+                const oppScore = opponent?.score || 0;
+                const result = me.score > oppScore ? 'victory' : me.score === oppScore ? 'draw' : 'defeat';
+                onBattleFinished({
+                  mode: '1v1 PvP Duel',
+                  opponentName: opponent?.name || 'Rival Trainer',
+                  opponentAvatarId: opponent?.avatarId ? String(opponent.avatarId) : undefined,
+                  playerScore: me.score,
+                  opponentScore: oppScore,
+                  result,
+                  rewardTokens: tokens,
+                  rewardTP: me.score,
+                });
               }
             }
           }
@@ -366,6 +388,22 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
     }
   };
 
+  const handleTypedSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!typedGuess.trim() || hasAnsweredThisRound || isReveal || !curQ) return;
+    const clean = typedGuess.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+    const matched = curQ.options.find(
+      (o) =>
+        o.displayName.toLowerCase().replace(/[^a-z0-9]/g, '') === clean ||
+        ('name' in o && typeof (o as any).name === 'string' && (o as any).name.toLowerCase().replace(/[^a-z0-9]/g, '') === clean)
+    );
+    if (matched) {
+      handleSelectAnswer(matched.id);
+    } else {
+      handleSelectAnswer(0);
+    }
+  };
+
   // 5. Leave Battle
   const handleLeaveRoom = async () => {
     sound.playClick();
@@ -485,12 +523,18 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
                 </label>
                 <select
                   value={difficulty}
-                  onChange={(e) => setDifficulty(e.target.value as GameDifficulty)}
+                  onChange={(e) => {
+                    const d = e.target.value as GameDifficulty;
+                    setDifficulty(d);
+                    if (d === 'extreme' || d === 'menacing') setTimeLimit(30);
+                  }}
                   className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl p-2.5 outline-none focus:border-amber-500"
                 >
                   <option value="easy">Easy (15s)</option>
                   <option value="medium">Medium (12s)</option>
                   <option value="hard">Hard (8s)</option>
+                  <option value="extreme">Extreme (30s - 4 Options & Classified Dossier)</option>
+                  <option value="menacing">Menacing (30s - Manual Typing & Classified Dossier)</option>
                 </select>
               </div>
 
@@ -572,7 +616,7 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
                   Time Limit
                 </label>
                 <div className="flex gap-2">
-                  {[10, 15, 20].map((s) => (
+                  {[10, 15, 20, 30].map((s) => (
                     <button
                       key={s}
                       onClick={() => setTimeLimit(s)}
@@ -594,12 +638,18 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
                 </label>
                 <select
                   value={difficulty}
-                  onChange={(e) => setDifficulty(e.target.value as GameDifficulty)}
+                  onChange={(e) => {
+                    const d = e.target.value as GameDifficulty;
+                    setDifficulty(d);
+                    if (d === 'extreme' || d === 'menacing') setTimeLimit(30);
+                  }}
                   className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl p-2.5 outline-none focus:border-amber-500"
                 >
-                  <option value="easy">Easy (Classic Options)</option>
-                  <option value="medium">Medium (Close Decoys)</option>
-                  <option value="hard">Hard (Fast Pace)</option>
+                  <option value="easy">Easy (Classic Options - 15s)</option>
+                  <option value="medium">Medium (Close Decoys - 12s)</option>
+                  <option value="hard">Hard (Fast Pace - 8s)</option>
+                  <option value="extreme">Extreme (Classified Dossier & 4 Options - 30s)</option>
+                  <option value="menacing">Menacing (Classified Dossier & Manual Typing - 30s)</option>
                 </select>
               </div>
 
@@ -996,47 +1046,122 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
           </span>
         </div>
 
-        {/* 4 Options Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl mx-auto pt-2">
-          {curQ.options.map((opt) => {
-            const isSelected = selectedChoiceId === opt.id;
-            const isCorrect = opt.id === curQ.correctOptionId;
+        {/* Classified Dossier for Extreme / Menacing */}
+        {(room.difficulty === 'extreme' || room.difficulty === 'menacing') && (
+          <div
+            className={`p-3.5 rounded-2xl border text-xs max-w-lg mx-auto ${
+              room.difficulty === 'menacing'
+                ? 'bg-red-950/40 border-red-500/40 text-red-200'
+                : 'bg-purple-950/40 border-purple-500/40 text-purple-200'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2 mb-2 pb-2 border-b border-white/10">
+              <span className="flex items-center gap-1.5 font-mono font-black uppercase text-[11px] tracking-wider">
+                {room.difficulty === 'menacing' ? (
+                  <>
+                    <Skull className="w-3.5 h-3.5 text-red-400" />
+                    <span className="text-red-400">Classified Dossier // Menacing Protocol</span>
+                  </>
+                ) : (
+                  <>
+                    <Flame className="w-3.5 h-3.5 text-purple-400" />
+                    <span className="text-purple-400">Classified Dossier // Extreme Protocol</span>
+                  </>
+                )}
+              </span>
+              <span className="px-2 py-0.5 rounded bg-black/40 text-[10px] font-mono">30s Limit</span>
+            </div>
 
-            let btnClass = 'bg-slate-950/80 border-slate-800 text-slate-200 hover:border-amber-500/50';
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-left text-[11px]">
+              <div className="bg-black/30 p-2 rounded-xl">
+                <span className="text-slate-400 block text-[9px] uppercase font-bold">Category</span>
+                <span className="font-semibold">{curQ.species || 'Unknown'}</span>
+              </div>
+              <div className="bg-black/30 p-2 rounded-xl">
+                <span className="text-slate-400 block text-[9px] uppercase font-bold">Height / Weight</span>
+                <span className="font-semibold">
+                  {(curQ.height / 10).toFixed(1)}m / {(curQ.weight / 10).toFixed(1)}kg
+                </span>
+              </div>
+              <div className="bg-black/30 p-2 rounded-xl col-span-2 sm:col-span-1">
+                <span className="text-slate-400 block text-[9px] uppercase font-bold">Primary Type</span>
+                <span className="font-semibold capitalize">{curQ.types.join(' / ')}</span>
+              </div>
+            </div>
+          </div>
+        )}
 
-            if (isReveal) {
-              if (isCorrect) {
-                btnClass = 'bg-emerald-500/20 border-emerald-400 text-emerald-300 font-black shadow-lg shadow-emerald-950/40';
-              } else if (isSelected) {
-                btnClass = 'bg-red-500/20 border-red-400 text-red-300 line-through';
-              } else {
-                btnClass = 'bg-slate-950/40 border-slate-800/60 opacity-40 text-slate-500';
-              }
-            } else if (isSelected) {
-              btnClass = 'bg-amber-500/20 border-amber-400 text-amber-300 font-bold';
-            }
-
-            return (
-              <button
-                key={opt.id}
-                id={`duel-option-${opt.id}`}
+        {/* Menacing: Manual Typing Input / Extreme & Others: 4 Options Grid */}
+        {room.difficulty === 'menacing' ? (
+          <form onSubmit={handleTypedSubmit} className="max-w-md mx-auto pt-2 space-y-3">
+            <div className="relative">
+              <input
+                type="text"
+                id="duel-menacing-input"
+                value={typedGuess}
+                onChange={(e) => setTypedGuess(e.target.value)}
                 disabled={hasAnsweredThisRound || isReveal}
-                onClick={() => handleSelectAnswer(opt.id)}
-                className={`p-4 rounded-2xl border text-sm sm:text-base font-medium flex items-center justify-between transition-all transform active:scale-98 ${btnClass}`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <span className="w-7 h-7 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center text-xs font-mono font-bold text-slate-400">
-                    #{opt.id}
-                  </span>
-                  <span className="font-bold">{opt.displayName}</span>
-                </div>
+                placeholder={hasAnsweredThisRound ? 'Guess Locked In' : 'Type exact Pokémon name...'}
+                autoFocus
+                className="w-full bg-slate-950 border-2 border-red-500/50 rounded-2xl px-5 py-3.5 text-white placeholder-slate-500 font-bold text-center tracking-wide outline-none focus:border-red-400 focus:ring-2 focus:ring-red-500/20 text-base"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono font-black text-red-400 uppercase tracking-widest px-2 py-1 rounded bg-red-950/80 border border-red-800/60">
+                Type Name
+              </span>
+            </div>
 
-                {isReveal && isCorrect && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />}
-                {isReveal && !isCorrect && isSelected && <XCircle className="w-5 h-5 text-red-400 shrink-0" />}
-              </button>
-            );
-          })}
-        </div>
+            <button
+              type="submit"
+              id="btn-submit-menacing-duel"
+              disabled={!typedGuess.trim() || hasAnsweredThisRound || isReveal}
+              className="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-extrabold text-sm shadow-lg shadow-red-950/40 flex items-center justify-center gap-2 transition-all transform active:scale-98"
+            >
+              <Send className="w-4 h-4" />
+              <span>Lock In Menacing Guess</span>
+            </button>
+          </form>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl mx-auto pt-2">
+            {curQ.options.map((opt) => {
+              const isSelected = selectedChoiceId === opt.id;
+              const isCorrect = opt.id === curQ.correctOptionId;
+
+              let btnClass = 'bg-slate-950/80 border-slate-800 text-slate-200 hover:border-amber-500/50';
+
+              if (isReveal) {
+                if (isCorrect) {
+                  btnClass = 'bg-emerald-500/20 border-emerald-400 text-emerald-300 font-black shadow-lg shadow-emerald-950/40';
+                } else if (isSelected) {
+                  btnClass = 'bg-red-500/20 border-red-400 text-red-300 line-through';
+                } else {
+                  btnClass = 'bg-slate-950/40 border-slate-800/60 opacity-40 text-slate-500';
+                }
+              } else if (isSelected) {
+                btnClass = 'bg-amber-500/20 border-amber-400 text-amber-300 font-bold';
+              }
+
+              return (
+                <button
+                  key={opt.id}
+                  id={`duel-option-${opt.id}`}
+                  disabled={hasAnsweredThisRound || isReveal}
+                  onClick={() => handleSelectAnswer(opt.id)}
+                  className={`p-4 rounded-2xl border text-sm sm:text-base font-medium flex items-center justify-between transition-all transform active:scale-98 ${btnClass}`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="w-7 h-7 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center text-xs font-mono font-bold text-slate-400">
+                      #{opt.id}
+                    </span>
+                    <span className="font-bold">{opt.displayName}</span>
+                  </div>
+
+                  {isReveal && isCorrect && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />}
+                  {isReveal && !isCorrect && isSelected && <XCircle className="w-5 h-5 text-red-400 shrink-0" />}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Live Status indicator */}
         <div className="text-xs text-slate-400 pt-2 flex items-center justify-center gap-3">

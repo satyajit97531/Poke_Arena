@@ -80,7 +80,7 @@ export function generateQuestion(
     shadowCrop = parts[Math.floor(Math.random() * parts.length)];
   }
 
-  const questionTimeLimit = difficulty === 'extreme' ? 30 : mode === 'blitz' ? 60 : 15;
+  const questionTimeLimit = (difficulty === 'extreme' || difficulty === 'menacing') ? 30 : mode === 'blitz' ? 60 : 15;
 
   return {
     pokemon: target,

@@ -36,14 +36,19 @@ import {
   Calendar,
   Tag,
   Package,
+  QrCode,
+  Camera,
+  Clock,
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
-import { Achievement, Pokemon, ShopItem, TrainerAccount } from '../types/pokemon';
+import { Achievement, Pokemon, ShopItem, TrainerAccount, FriendRequest } from '../types/pokemon';
 import { ACHIEVEMENTS_LIST, KANTO_BADGES } from '../data/achievements';
 import { CURATED_POKEMON, OFFICIAL_ARTWORK_URL } from '../data/pokemonData';
 import { SHOP_ITEMS } from '../data/shopItems';
 import { ALL_REGIONAL_BADGES, GymBadgeInfo } from '../data/regionalBadges';
-import { TROPHY_ROAD_REWARDS, DAILY_STREAK_REWARDS, TrophyMilestoneReward, DailyStreakReward } from '../data/rewardsData';
+import { TROPHY_ROAD_REWARDS, TRAINING_BOUNTIES_REWARDS, TrophyMilestoneReward, TrainingBountyReward } from '../data/rewardsData';
+import { TRAINER_AVATARS, TrainerAvatar, getAccountAvatarUrl, getAccountAvatarName, getTrainerFrameBorder, getTrainerBadgeClass } from '../data/trainerAvatars';
 import { createDefaultAccount, getAllAccounts, saveActiveAccount, saveAllAccounts, setActiveAccountId, syncAccountToMongo, evaluateAchievements } from '../utils/accounts';
 import { sound } from '../utils/audio';
 
@@ -53,6 +58,11 @@ interface ProfileModalProps {
   account: TrainerAccount;
   onAccountUpdated: (acc: TrainerAccount) => void;
   onLogout?: () => void;
+  initialTab?: 'profile' | 'avatars' | 'friends' | 'battles';
+  onOpenAchievements?: () => void;
+  onOpenBadges?: (region?: string) => void;
+  onOpenShop?: () => void;
+  onStartDuelWithFriend?: (friendName: string, roomCode?: string) => void;
 }
 
 export const ProfileModal: React.FC<ProfileModalProps> = ({
@@ -61,30 +71,21 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   account,
   onAccountUpdated,
   onLogout,
+  initialTab = 'profile',
+  onOpenAchievements,
+  onOpenBadges,
+  onOpenShop,
+  onStartDuelWithFriend,
 }) => {
-  const [activeTab, setActiveTab] = useState<'profile' | 'rewards' | 'avatars' | 'shop' | 'achievements' | 'badges' | 'friends'>('profile');
-  const [badgeRegion, setBadgeRegion] = useState<string>('All');
-  const [rewardsSubTab, setRewardsSubTab] = useState<'trophy_road' | 'daily_streak'>('trophy_road');
-  const [claimedMilestones, setClaimedMilestones] = useState<number[]>(() => {
-    try {
-      const raw = localStorage.getItem(`claimed_milestones_${account.id}`);
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
+  const [activeTab, setActiveTab] = useState<'profile' | 'avatars' | 'friends' | 'battles'>(initialTab);
+  const [avatarFilter, setAvatarFilter] = useState<'all' | 'unlocked' | 'champions' | 'gym_leaders' | 'special'>('all');
+  const [inspectTrainer, setInspectTrainer] = useState<TrainerAvatar | null>(null);
+
+  useEffect(() => {
+    if (isOpen && initialTab) {
+      setActiveTab(initialTab);
     }
-  });
-  const [shopFilter, setShopFilter] = useState<'all' | 'normal' | 'rare' | 'super_rare' | 'epic' | 'mythic' | 'legendary'>('all');
-  const [avatarFilter, setAvatarFilter] = useState<'all' | 'unlocked' | 'hisui' | 'legendary' | 'starter'>('all');
-  const [inspectAvatar, setInspectAvatar] = useState<{
-    pokemon: Pokemon;
-    rarity: string;
-    unlockRequirement: string;
-    frameClass: string;
-    badgeClass: string;
-    isUnlocked: boolean;
-    tokenCost: number;
-  } | null>(null);
-  const [shopToast, setShopToast] = useState<string | null>(null);
+  }, [isOpen, initialTab]);
   const [newFriendName, setNewFriendName] = useState('');
   const [copiedUsername, setCopiedUsername] = useState(false);
   const [friendError, setFriendError] = useState('');
@@ -92,6 +93,20 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   const [copiedTrainerCode, setCopiedTrainerCode] = useState(false);
   const [challengeToast, setChallengeToast] = useState<string | null>(null);
   const [achFilter, setAchFilter] = useState<'all' | 'badges' | 'speed' | 'modes' | 'streak' | 'collector'>('all');
+
+  // Friend System Extended State
+  const [friendSubTab, setFriendSubTab] = useState<'friends' | 'received' | 'sent'>('friends');
+  const [receivedRequests, setReceivedRequests] = useState<FriendRequest[]>([]);
+  const [sentRequests, setSentRequests] = useState<FriendRequest[]>([]);
+  const [onlineStatusMap, setOnlineStatusMap] = useState<Record<string, boolean>>({});
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [qrActiveTab, setQrActiveTab] = useState<'my_qr' | 'scan_qr'>('my_qr');
+  const [scannedInput, setScannedInput] = useState('');
+  const [friendActionLoading, setFriendActionLoading] = useState<string | null>(null);
+  const [confirmRemoveFriend, setConfirmRemoveFriend] = useState<string | null>(null);
+  const [challengeRoomInfo, setChallengeRoomInfo] = useState<{ friendName: string; roomCode: string } | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedUserId, setCopiedUserId] = useState(false);
 
   // Edit Profile Form
   const [editName, setEditName] = useState(account.displayName);
@@ -149,6 +164,39 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     return () => clearInterval(timer);
   }, [resendTimer]);
 
+  // Sync and poll friend requests & friend roster
+  const loadFriendData = React.useCallback(async () => {
+    try {
+      const uname = account.username || account.displayName;
+      const res = await fetch(`/api/friends/data/${encodeURIComponent(account.id)}?username=${encodeURIComponent(uname)}`);
+      const data = await res.json();
+      if (data.success) {
+        if (Array.isArray(data.friends)) {
+          if (JSON.stringify(data.friends) !== JSON.stringify(account.friends || [])) {
+            const updated = { ...account, friends: data.friends };
+            saveActiveAccount(updated);
+            onAccountUpdated(updated);
+          }
+        }
+        if (data.onlineStatus && typeof data.onlineStatus === 'object') {
+          setOnlineStatusMap(data.onlineStatus);
+        }
+        setReceivedRequests(data.received || []);
+        setSentRequests(data.sent || []);
+      }
+    } catch (err) {
+      console.error('Error fetching friend system data:', err);
+    }
+  }, [account, onAccountUpdated]);
+
+  useEffect(() => {
+    if (isOpen && activeTab === 'friends') {
+      loadFriendData();
+      const interval = setInterval(loadFriendData, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [isOpen, activeTab, loadFriendData]);
+
   if (!isOpen) return null;
 
   const allAccounts = getAllAccounts();
@@ -200,56 +248,146 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     onAccountUpdated(updated);
   };
 
-  // Add friend / rival to network with username uniqueness validation
-  const handleAddFriend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setFriendError('');
-    setFriendSuccess('');
-    const target = newFriendName.trim().replace(/^@/, '');
-    if (!target) {
-      setFriendError('Please enter a username to add.');
+  // Send friend request by User ID, @username, or display name
+  const handleSendFriendRequest = async (targetQuery: string) => {
+    const clean = targetQuery.trim().replace(/^@/, '');
+    if (!clean) {
+      setFriendError('Please enter a Trainer ID or username.');
       return;
     }
     const myUname = (account.username || account.displayName).toLowerCase().replace(/\s+/g, '_');
-    if (target.toLowerCase() === myUname) {
-      setFriendError('You cannot add yourself as a friend.');
+    if (clean.toLowerCase() === myUname || clean === account.id) {
+      setFriendError('You cannot send a friend request to yourself.');
       return;
     }
-    if ((account.friends || []).some((f) => f.toLowerCase() === target.toLowerCase())) {
-      setFriendError(`@${target} is already on your friend list!`);
+    if ((account.friends || []).length >= 100) {
+      setFriendError('You have reached the maximum limit of 100 friends.');
+      return;
+    }
+    if ((account.friends || []).some((f) => f.toLowerCase() === clean.toLowerCase())) {
+      setFriendError(`@${clean} is already on your friends list!`);
       return;
     }
 
+    setFriendError('');
+    setFriendSuccess('');
+    setFriendActionLoading('send');
+
     try {
-      const res = await fetch(`/api/trainers/by-username/${encodeURIComponent(target)}`);
+      const res = await fetch('/api/friends/send-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fromUserId: account.id,
+          fromUsername: account.username || account.displayName.toLowerCase().replace(/\s+/g, '_'),
+          fromDisplayName: account.displayName,
+          fromAvatarId: account.avatarId || 25,
+          targetQuery: clean,
+        }),
+      });
+
       const data = await res.json();
-      if (!res.ok || !data.exists) {
-        setFriendError(`Trainer @${target} was not found. Make sure the username is exact.`);
+      if (!res.ok || !data.success) {
+        setFriendError(data.error || 'Failed to send friend request.');
+        sound.playWrong();
         return;
       }
 
-      const friendDisplayName = data.trainer.displayName || target;
-      const updatedFriends = [...(account.friends || []), friendDisplayName];
-      const updatedAcc: TrainerAccount = {
-        ...account,
-        friends: updatedFriends,
-      };
-      const { updatedAccount } = evaluateAchievements(updatedAcc, { friendAdded: true });
-      saveActiveAccount(updatedAccount);
-      onAccountUpdated(updatedAccount);
-      setNewFriendName('');
-      triggerConfetti();
       sound.playCorrect();
-      setFriendSuccess(`Added @${target} (${friendDisplayName}) to your friends roster!`);
-      setChallengeToast(`Added ${friendDisplayName} to your Trainer Network!`);
+      setNewFriendName('');
+      setScannedInput('');
+      setFriendSuccess(data.message || `Friend request sent to @${clean}!`);
+      setChallengeToast(`Friend request dispatched to @${clean}!`);
       setTimeout(() => setChallengeToast(null), 3000);
+      loadFriendData();
+      setFriendSubTab('sent');
+      setTimeout(() => setFriendSuccess(''), 4000);
     } catch {
-      setFriendError('Network error checking username.');
+      setFriendError('Network error connecting to friend server.');
+      sound.playWrong();
+    } finally {
+      setFriendActionLoading(null);
     }
   };
 
-  // Remove friend / rival from network
-  const handleRemoveFriend = (name: string) => {
+  const handleAddFriendSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    handleSendFriendRequest(newFriendName);
+  };
+
+  // Respond to friend request (Accept or Reject)
+  const handleRespondFriendRequest = async (requestId: string, action: 'accept' | 'reject') => {
+    setFriendActionLoading(requestId);
+    setFriendError('');
+    setFriendSuccess('');
+    try {
+      const res = await fetch('/api/friends/respond', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId,
+          action,
+          userId: account.id,
+          username: account.username || account.displayName,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (action === 'accept') {
+          sound.playFanfare();
+          triggerConfetti();
+          setFriendSuccess(data.message || 'Friend request accepted!');
+          if (data.friendName) {
+            const currentFriends = account.friends || [];
+            if (!currentFriends.includes(data.friendName) && currentFriends.length < 100) {
+              const updatedAcc = { ...account, friends: [...currentFriends, data.friendName] };
+              saveActiveAccount(updatedAcc);
+              onAccountUpdated(updatedAcc);
+            }
+          }
+        } else {
+          sound.playButtonBack();
+          setFriendSuccess('Friend request rejected.');
+        }
+        loadFriendData();
+        setTimeout(() => setFriendSuccess(''), 3000);
+      } else {
+        setFriendError(data.error || 'Failed to resolve request.');
+        sound.playWrong();
+      }
+    } catch {
+      setFriendError('Network error resolving friend request.');
+      sound.playWrong();
+    } finally {
+      setFriendActionLoading(null);
+    }
+  };
+
+  // Cancel sent friend request
+  const handleCancelSentRequest = async (requestId: string) => {
+    setFriendActionLoading(requestId);
+    try {
+      const res = await fetch('/api/friends/cancel-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        sound.playButtonBack();
+        setFriendSuccess('Friend request cancelled.');
+        loadFriendData();
+        setTimeout(() => setFriendSuccess(''), 3000);
+      }
+    } catch {
+      setFriendError('Failed to cancel request.');
+    } finally {
+      setFriendActionLoading(null);
+    }
+  };
+
+  // Remove friend from roster
+  const handleRemoveFriend = async (name: string) => {
     sound.playButtonBack();
     const currentFriends = account.friends || [];
     const updatedFriends = currentFriends.filter((f) => f !== name);
@@ -259,6 +397,54 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     };
     saveActiveAccount(updatedAcc);
     onAccountUpdated(updatedAcc);
+    setConfirmRemoveFriend(null);
+
+    try {
+      await fetch('/api/friends/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: account.id,
+          username: account.username || account.displayName,
+          friendName: name,
+        }),
+      });
+    } catch {
+      // offline fallback already handled
+    }
+    setFriendSuccess(`Removed ${name} from your friends.`);
+    setTimeout(() => setFriendSuccess(''), 3000);
+  };
+
+  // Send 1v1 Battle Challenge to friend
+  const handleChallengeFriend = async (friendName: string) => {
+    sound.playClick();
+    setFriendActionLoading(`challenge_${friendName}`);
+    try {
+      const res = await fetch('/api/friends/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fromUserId: account.id,
+          fromUsername: account.username || account.displayName,
+          fromDisplayName: account.displayName,
+          fromAvatarId: account.avatarId || 25,
+          toFriendName: friendName,
+          difficulty: 'extreme',
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.roomCode) {
+        sound.playFanfare();
+        setChallengeRoomInfo({ friendName, roomCode: data.roomCode });
+      } else {
+        setFriendError(data.error || 'Failed to dispatch challenge.');
+      }
+    } catch {
+      setFriendError('Network error creating battle challenge.');
+    } finally {
+      setFriendActionLoading(null);
+    }
   };
 
   // Toggle achievement / badge showcase pin (up to 3)
@@ -281,13 +467,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     };
     saveActiveAccount(updatedAcc);
     onAccountUpdated(updatedAcc);
-  };
-
-  // Challenge friend to 1v1 battle
-  const handleChallengeFriend = (friendName: string) => {
-    sound.playTrophyUnlock();
-    setChallengeToast(`Battle Invitation dispatched to ${friendName}! Enter 1v1 Arena to duel.`);
-    setTimeout(() => setChallengeToast(null), 3500);
   };
 
   // Step 1: Request Signup OTP
@@ -562,63 +741,51 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     };
   };
 
-  const isPokemonAvatarUnlocked = (poke: Pokemon) => {
-    const info = getAvatarInfo(poke);
-    // Common Pokémon are unlocked by default
-    if (info.rarity === 'Common') return true;
-    // Default starter IDs are unlocked
-    if ([25, 1, 4, 7, 133, 152, 155, 158].includes(poke.id)) return true;
-    return (account.unlockedAvatars || []).includes(poke.id);
+  const isTrainerUnlocked = (trainer: TrainerAvatar) => {
+    if (trainer.isDefaultUnlocked) return true;
+    const unlockedList = account.unlockedTrainerAvatars || ['red', 'pikachu'];
+    return unlockedList.includes(trainer.id);
   };
 
-  const handleUnlockAvatarWithTokens = (poke: Pokemon, cost: number) => {
-    const currentTokens = account.battleTokens ?? 0;
-    if (currentTokens < cost) return;
-    sound.playButtonPress();
-    const nextTokens = currentTokens - cost;
-    const nextUnlocked = Array.from(new Set([...(account.unlockedAvatars || []), poke.id]));
-    const updated: TrainerAccount = {
-      ...account,
-      battleTokens: nextTokens,
-      unlockedAvatars: nextUnlocked,
-      avatarId: poke.id, // Auto equip
-    };
-    saveActiveAccount(updated);
-    onAccountUpdated(updated);
-    sound.playTrophyUnlock();
-    confetti({ particleCount: 40, spread: 70, origin: { y: 0.6 } });
-    setInspectAvatar(null);
-  };
-
-  const handleBuyShopItem = (item: ShopItem) => {
-    sound.playButtonPress();
-    const currentTokens = account.battleTokens ?? 0;
-    if (currentTokens < item.cost) return;
-
-    const nextTokens = currentTokens - item.cost;
-    const nextInventory = { ...(account.inventory || {}) };
-    nextInventory[item.id] = (nextInventory[item.id] || 0) + (typeof item.rewardValue === 'number' ? item.rewardValue : 1);
-
-    const nextUnlockedTrainers = [...(account.unlockedTrainerAvatars || [])];
-    if (item.rewardType === 'avatar' && typeof item.rewardValue === 'string') {
-      if (!nextUnlockedTrainers.includes(item.rewardValue)) {
-        nextUnlockedTrainers.push(item.rewardValue);
-      }
+  const isTrainerEquipped = (trainer: TrainerAvatar) => {
+    if (trainer.id === 'pikachu') {
+      return account.trainerAvatarId === 'pikachu' || (account.avatarId === 25 && !account.trainerAvatarId);
     }
+    return account.trainerAvatarId === trainer.id;
+  };
 
+  const handleEquipTrainer = (trainer: TrainerAvatar) => {
+    if (!isTrainerUnlocked(trainer)) return;
+    sound.playButtonPress();
+    const updated: TrainerAccount = {
+      ...account,
+      trainerAvatarId: trainer.id,
+      avatarId: trainer.numericId || 25,
+    };
+    saveActiveAccount(updated);
+    onAccountUpdated(updated);
+  };
+
+  const handleUnlockTrainerWithTokens = (trainer: TrainerAvatar) => {
+    const currentTokens = account.battleTokens ?? 0;
+    if (currentTokens < trainer.tokenCost) return;
+    sound.playButtonPress();
+    const nextTokens = currentTokens - trainer.tokenCost;
+    const nextUnlockedTrainers = Array.from(
+      new Set([...(account.unlockedTrainerAvatars || ['red', 'pikachu']), trainer.id])
+    );
     const updated: TrainerAccount = {
       ...account,
       battleTokens: nextTokens,
-      inventory: nextInventory,
       unlockedTrainerAvatars: nextUnlockedTrainers,
+      trainerAvatarId: trainer.id,
+      avatarId: trainer.numericId || 25,
     };
-
     saveActiveAccount(updated);
     onAccountUpdated(updated);
     sound.playTrophyUnlock();
-    confetti({ particleCount: 35, spread: 60, origin: { y: 0.6 } });
-    setShopToast(`Successfully purchased ${item.name}!`);
-    setTimeout(() => setShopToast(null), 3000);
+    confetti({ particleCount: 45, spread: 70, origin: { y: 0.6 } });
+    setInspectTrainer(null);
   };
 
   return (
@@ -632,9 +799,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
         {/* Header */}
         <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-rose-500 to-amber-500 p-0.5 shadow-lg">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-rose-500 to-amber-500 p-0.5 shadow-lg overflow-hidden flex items-center justify-center">
               <img
-                src={OFFICIAL_ARTWORK_URL(account.avatarId)}
+                src={getAccountAvatarUrl(account)}
                 alt="Trainer Avatar"
                 className="w-full h-full rounded-2xl object-contain bg-slate-950 p-1"
               />
@@ -691,54 +858,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             </button>
 
             <button
-              id="tab-profile-rewards"
-              onClick={() => {
-                sound.playButtonPress();
-                setActiveTab('rewards');
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all shrink-0 ${
-                activeTab === 'rewards'
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Trophy className="w-3.5 h-3.5" />
-              <span>Rewards & Streaks</span>
-            </button>
-
-            <button
-              id="tab-profile-badges"
-              onClick={() => {
-                sound.playButtonPress();
-                setActiveTab('badges');
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all shrink-0 ${
-                activeTab === 'badges'
-                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Medal className="w-3.5 h-3.5" />
-              <span>Gym Badges (9 Regions)</span>
-            </button>
-
-            <button
-              id="tab-profile-friends"
-              onClick={() => {
-                sound.playButtonPress();
-                setActiveTab('friends');
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all shrink-0 ${
-                activeTab === 'friends'
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>Friend List ({(account.friends || []).length})</span>
-            </button>
-
-            <button
               id="tab-profile-avatars"
               onClick={() => {
                 sound.playButtonPress();
@@ -755,39 +874,35 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             </button>
 
             <button
-              id="tab-profile-shop"
+              id="tab-profile-friends"
               onClick={() => {
                 sound.playButtonPress();
-                setActiveTab('shop');
+                setActiveTab('friends');
               }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all ${
-                activeTab === 'shop'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all shrink-0 ${
+                activeTab === 'friends'
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Friends ({(account.friends || []).length}/100)</span>
+            </button>
+
+            <button
+              id="tab-profile-battles"
+              onClick={() => {
+                sound.playButtonPress();
+                setActiveTab('battles');
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all shrink-0 ${
+                activeTab === 'battles'
                   ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <ShoppingBag className="w-3.5 h-3.5 text-amber-400" />
-              <span>Shop</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono font-bold flex items-center gap-1">
-                <Coins className="w-2.5 h-2.5" />
-                {account.battleTokens ?? 0}
-              </span>
-            </button>
-
-            <button
-              id="tab-profile-achievements"
-              onClick={() => {
-                sound.playButtonPress();
-                setActiveTab('achievements');
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all ${
-                activeTab === 'achievements'
-                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Award className="w-3.5 h-3.5" />
-              <span>Achievements</span>
+              <Swords className="w-3.5 h-3.5" />
+              <span>Battle History ({(account.battleHistory || []).length}/25)</span>
             </button>
           </div>
         </div>
@@ -836,7 +951,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                     type="button"
                     onClick={() => {
                       sound.playButtonPress();
-                      setActiveTab('achievements');
+                      if (onOpenAchievements) {
+                        onOpenAchievements();
+                        onClose();
+                      }
                     }}
                     className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold hover:underline"
                   >
@@ -853,7 +971,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                       type="button"
                       onClick={() => {
                         sound.playButtonPress();
-                        setActiveTab('achievements');
+                        if (onOpenAchievements) {
+                          onOpenAchievements();
+                          onClose();
+                        }
                       }}
                       className="px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-xs font-bold transition-all"
                     >
@@ -907,7 +1028,10 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                     type="button"
                     onClick={() => {
                       sound.playButtonPress();
-                      setActiveTab('badges');
+                      if (onOpenBadges) {
+                        onOpenBadges('Kanto');
+                        onClose();
+                      }
                     }}
                     className="text-xs text-purple-400 hover:text-purple-300 font-semibold hover:underline"
                   >
@@ -990,6 +1114,22 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                     <p className="text-[11px] text-slate-400">
                       Signed in as <span className="text-purple-300 font-semibold font-mono">@{account.username || account.displayName.toLowerCase().replace(/\s+/g, '_')}</span>
                     </p>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      {mongoStatus.connected ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                          MongoDB Atlas Synced
+                        </span>
+                      ) : (
+                        <span
+                          title={mongoStatus.error || 'Running in local storage & memory mode. Add 0.0.0.0/0 to Atlas Network Access for cloud sync.'}
+                          className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-300/90 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20 cursor-help"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                          Local & In-Memory Mode
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <button
                     id="btn-logout-trainer"
@@ -1018,11 +1158,11 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                     <Sparkles className="w-4 h-4 text-amber-400" />
                     <span>Trainer Profile Avatars</span>
                     <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
-                      {(account.unlockedAvatars || []).length} Unlocked
+                      {TRAINER_AVATARS.filter((t) => isTrainerUnlocked(t)).length} / {TRAINER_AVATARS.length} Unlocked
                     </span>
                   </h3>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    Click an unlocked Pokémon avatar to equip it. Tap any locked avatar to view its exact unlock requirements or unlock it using Battle Tokens!
+                    Equip iconic Pokémon Trainers (Red, Blue, Brock, Misty, Cynthia, Ash & more) or Pikachu. Tap any locked trainer to view requirements or unlock with Battle Tokens!
                   </p>
                 </div>
 
@@ -1038,11 +1178,11 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
               <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
                 {(
                   [
-                    { id: 'all', label: 'All Pokémon' },
-                    { id: 'hisui', label: 'Hisui Region' },
-                    { id: 'legendary', label: 'Legendary & Mythical' },
-                    { id: 'starter', label: 'Starters & Rare' },
+                    { id: 'all', label: 'All Trainers & Pikachu' },
                     { id: 'unlocked', label: 'My Unlocked' },
+                    { id: 'champions', label: 'Champions & Monarchs' },
+                    { id: 'gym_leaders', label: 'Gym Leaders' },
+                    { id: 'special', label: 'Special & Coordinators' },
                   ] as const
                 ).map((chip) => (
                   <button
@@ -1065,38 +1205,32 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
               {/* Avatars Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 max-h-[460px] overflow-y-auto pr-1">
-                {CURATED_POKEMON.filter((p) => {
-                  if (avatarFilter === 'hisui') return p.region === 'hisui' || p.isRegionalForm;
-                  if (avatarFilter === 'legendary') return p.isLegendary || p.isMythical;
-                  if (avatarFilter === 'starter') return [1, 4, 7, 25, 133, 152, 155, 158, 252, 255, 258, 387, 390, 393, 495, 498, 501, 650, 653, 656, 722, 725, 728, 810, 813, 816, 906, 909, 912].includes(p.id);
-                  if (avatarFilter === 'unlocked') return isPokemonAvatarUnlocked(p);
+                {TRAINER_AVATARS.filter((trainer) => {
+                  if (avatarFilter === 'unlocked') return isTrainerUnlocked(trainer);
+                  const cat = trainer.category || (trainer.role.toLowerCase().includes('champion') ? 'champion' : trainer.role.toLowerCase().includes('gym') ? 'gym_leader' : 'coordinator_special');
+                  if (avatarFilter === 'champions') return cat === 'champion';
+                  if (avatarFilter === 'gym_leaders') return cat === 'gym_leader';
+                  if (avatarFilter === 'special') return cat === 'coordinator_special';
                   return true;
-                }).map((poke) => {
-                  const info = getAvatarInfo(poke);
-                  const isUnlocked = isPokemonAvatarUnlocked(poke);
-                  const isEquipped = account.avatarId === poke.id;
+                }).map((trainer) => {
+                  const isUnlocked = isTrainerUnlocked(trainer);
+                  const isEquipped = isTrainerEquipped(trainer);
+                  const frameStyle = trainer.frameBorder || getTrainerFrameBorder(trainer.rarity);
+                  const badgeStyle = trainer.badgeClass || getTrainerBadgeClass(trainer.rarity);
 
                   return (
                     <div
-                      key={`avatar-${poke.id}`}
+                      key={`trainer-avatar-${trainer.id}`}
                       onClick={() => {
                         sound.playButtonPress();
                         if (isUnlocked) {
-                          handleEquipAvatar(poke.id);
+                          handleEquipTrainer(trainer);
                         } else {
-                          setInspectAvatar({
-                            pokemon: poke,
-                            rarity: info.rarity,
-                            unlockRequirement: info.howToAchieve,
-                            frameClass: info.frameBorder,
-                            badgeClass: info.badgeClass,
-                            isUnlocked: false,
-                            tokenCost: info.tokenCost,
-                          });
+                          setInspectTrainer(trainer);
                         }
                       }}
                       className={`relative flex flex-col items-center p-3 rounded-2xl cursor-pointer transition-all hover:scale-[1.03] active:scale-[0.98] ${
-                        info.frameBorder
+                        frameStyle
                       } ${
                         isEquipped
                           ? 'ring-2 ring-rose-400 shadow-xl shadow-rose-950'
@@ -1105,23 +1239,21 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                           : 'opacity-70 hover:opacity-100'
                       }`}
                     >
-                      {/* Rarity Tag */}
+                      {/* Rarity Tag & Region */}
                       <div className="w-full flex items-center justify-between gap-1 mb-1">
-                        <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider border ${info.badgeClass}`}>
-                          {info.rarity}
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider border ${badgeStyle}`}>
+                          {trainer.rarity}
                         </span>
-                        {poke.region === 'hisui' && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-400/40">
-                            HISUI
-                          </span>
-                        )}
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-slate-950 text-slate-300 border border-slate-800">
+                          {trainer.region}
+                        </span>
                       </div>
 
-                      {/* Pokémon Artwork */}
+                      {/* Trainer Avatar Sprite */}
                       <div className="w-16 h-16 sm:w-20 sm:h-20 flex items-center justify-center relative my-1">
                         <img
-                          src={OFFICIAL_ARTWORK_URL(poke.id)}
-                          alt={poke.displayName}
+                          src={trainer.spriteUrl}
+                          alt={trainer.name}
                           className={`max-h-16 sm:max-h-18 w-auto object-contain drop-shadow-md transition-all ${
                             isUnlocked ? '' : 'filter grayscale contrast-125 brightness-40'
                           }`}
@@ -1134,12 +1266,12 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                         )}
                       </div>
 
-                      {/* Name & Region */}
+                      {/* Name & Title */}
                       <span className="text-xs font-bold text-white text-center truncate w-full mt-1">
-                        {poke.displayName}
+                        {trainer.name}
                       </span>
-                      <span className="text-[10px] text-slate-400 capitalize">
-                        {poke.region} Region
+                      <span className="text-[10px] text-slate-400 truncate w-full text-center">
+                        {trainer.title}
                       </span>
 
                       {/* Status footer */}
@@ -1154,7 +1286,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                           </span>
                         ) : (
                           <span className="text-[10px] font-bold text-amber-400 flex items-center justify-center gap-1">
-                            <Info className="w-2.5 h-2.5" /> Unlock Info
+                            <Info className="w-2.5 h-2.5" /> {trainer.tokenCost} BT
                           </span>
                         )}
                       </div>
@@ -1163,13 +1295,13 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 })}
               </div>
 
-              {/* Locked Avatar Inspector Modal */}
-              {inspectAvatar && (
+              {/* Locked Trainer Inspector Modal */}
+              {inspectTrainer && (
                 <div className="p-4 rounded-2xl bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 border border-amber-500/40 shadow-2xl flex flex-col sm:flex-row items-center gap-4">
-                  <div className={`w-24 h-24 rounded-2xl p-2 flex items-center justify-center shrink-0 ${inspectAvatar.frameClass}`}>
+                  <div className={`w-24 h-24 rounded-2xl p-2 flex items-center justify-center shrink-0 ${inspectTrainer.frameBorder || getTrainerFrameBorder(inspectTrainer.rarity)}`}>
                     <img
-                      src={OFFICIAL_ARTWORK_URL(inspectAvatar.pokemon.id)}
-                      alt={inspectAvatar.pokemon.displayName}
+                      src={inspectTrainer.spriteUrl}
+                      alt={inspectTrainer.name}
                       className="max-h-20 w-auto object-contain drop-shadow"
                     />
                   </div>
@@ -1177,42 +1309,49 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                   <div className="flex-1 text-center sm:text-left">
                     <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mb-1">
                       <h4 className="text-lg font-bold font-display text-white">
-                        {inspectAvatar.pokemon.displayName}
+                        {inspectTrainer.name}
                       </h4>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase border ${inspectAvatar.badgeClass}`}>
-                        {inspectAvatar.rarity}
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase border ${inspectTrainer.badgeClass || getTrainerBadgeClass(inspectTrainer.rarity)}`}>
+                        {inspectTrainer.rarity}
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-slate-950 text-slate-300 border border-slate-800">
+                        {inspectTrainer.region} Region
                       </span>
                     </div>
 
-                    <div className="text-xs text-amber-300 font-semibold mb-1 flex items-center justify-center sm:justify-start gap-1">
-                      <Info className="w-3.5 h-3.5 shrink-0" />
-                      <span>How to Unlock:</span>
-                    </div>
-                    <p className="text-xs text-slate-300 bg-slate-950/80 p-2.5 rounded-xl border border-slate-800">
-                      {inspectAvatar.unlockRequirement}
+                    <p className="text-xs text-amber-300/90 font-medium mb-1">
+                      {inspectTrainer.title}
                     </p>
+
+                    <div className="text-xs text-slate-300 bg-slate-950/80 p-2.5 rounded-xl border border-slate-800 mb-2">
+                      <p className="mb-1 text-slate-200">{inspectTrainer.description || inspectTrainer.role}</p>
+                      <div className="text-[11px] text-amber-400 flex items-center gap-1">
+                        <Info className="w-3 h-3 shrink-0" />
+                        <span>How to Unlock: {inspectTrainer.howToUnlock}</span>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="flex flex-col gap-2 shrink-0 w-full sm:w-auto">
-                    {inspectAvatar.tokenCost > 0 && (
+                    {inspectTrainer.tokenCost > 0 && (
                       <button
                         type="button"
-                        disabled={(account.battleTokens ?? 0) < inspectAvatar.tokenCost}
-                        onClick={() => handleUnlockAvatarWithTokens(inspectAvatar.pokemon, inspectAvatar.tokenCost)}
+                        disabled={(account.battleTokens ?? 0) < inspectTrainer.tokenCost}
+                        onClick={() => handleUnlockTrainerWithTokens(inspectTrainer)}
                         className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md ${
-                          (account.battleTokens ?? 0) >= inspectAvatar.tokenCost
+                          (account.battleTokens ?? 0) >= inspectTrainer.tokenCost
                             ? 'bg-amber-500 text-slate-950 hover:bg-amber-400 cursor-pointer shadow-amber-950'
                             : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
                         }`}
                       >
                         <Coins className="w-3.5 h-3.5" />
-                        <span>Unlock for {inspectAvatar.tokenCost} BT</span>
+                        <span>Unlock for {inspectTrainer.tokenCost} BT</span>
                       </button>
                     )}
 
                     <button
                       type="button"
-                      onClick={() => setInspectAvatar(null)}
+                      onClick={() => setInspectTrainer(null)}
                       className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold"
                     >
                       Close
@@ -1223,712 +1362,75 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
             </div>
           )}
 
-          {/* 3. Poké Mart Shop Tab */}
-          {activeTab === 'shop' && (
-            <div className="space-y-4">
-              {/* Currency Balance & Description Banner */}
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/15 via-slate-950 to-purple-500/15 border border-amber-500/40 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0 shadow-lg shadow-amber-950">
-                    <Coins className="w-6 h-6 animate-pulse" />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold font-display text-white flex items-center gap-2">
-                      <span>Poké Mart & Battle Exchange</span>
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
-                        1v1 Rewards
-                      </span>
-                    </h3>
-                    <p className="text-xs text-slate-400">
-                      Earn Battle Tokens by winning <span className="text-rose-300 font-semibold">1v1 Duels</span> and spend them here on Normal, Rare, Super Rare, Mythical, and Legendary treasures!
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex flex-col items-center sm:items-end shrink-0 bg-slate-950/80 px-4 py-2.5 rounded-xl border border-amber-500/30">
-                  <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Your Balance</span>
-                  <div className="flex items-center gap-2 text-xl font-black font-display text-amber-400 font-mono">
-                    <Coins className="w-5 h-5" />
-                    <span>{(account.battleTokens ?? 0).toLocaleString()} <span className="text-xs text-amber-300">BT</span></span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Purchase Toast */}
-              {shopToast && (
-                <div className="p-3 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center justify-center gap-2 shadow-lg animate-fade-in">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>{shopToast}</span>
-                </div>
-              )}
-
-              {/* Shop Rarity Filter Pills */}
-              <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
-                {(
-                  [
-                    { id: 'all', label: 'All Items' },
-                    { id: 'normal', label: 'Normal' },
-                    { id: 'rare', label: 'Rare' },
-                    { id: 'super_rare', label: 'Super Rare' },
-                    { id: 'mythic', label: 'Mythical' },
-                    { id: 'legendary', label: 'Legendary' },
-                  ] as const
-                ).map((pill) => (
-                  <button
-                    key={pill.id}
-                    type="button"
-                    onClick={() => {
-                      sound.playButtonPress();
-                      setShopFilter(pill.id);
-                    }}
-                    className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap border transition-all ${
-                      shopFilter === pill.id
-                        ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md shadow-amber-950'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {pill.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Items Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 max-h-[460px] overflow-y-auto pr-1">
-                {SHOP_ITEMS.filter((item) => {
-                  if (shopFilter === 'all') return true;
-                  return item.rarity === shopFilter;
-                }).map((item) => {
-                  const canAfford = (account.battleTokens ?? 0) >= item.cost;
-                  const ownedCount = account.inventory?.[item.id] || 0;
-                  const isTrainerUnlocked = item.rewardType === 'avatar' && typeof item.rewardValue === 'string' && (account.unlockedTrainerAvatars || []).includes(item.rewardValue);
-
-                  const rarityBadgeClass =
-                    item.rarity === 'legendary'
-                      ? 'bg-amber-500/20 text-amber-300 border-amber-400/50'
-                      : item.rarity === 'mythic'
-                      ? 'bg-pink-500/20 text-pink-300 border-pink-400/50'
-                      : item.rarity === 'super_rare'
-                      ? 'bg-purple-500/20 text-purple-300 border-purple-400/50'
-                      : item.rarity === 'rare'
-                      ? 'bg-cyan-500/20 text-cyan-300 border-cyan-400/50'
-                      : 'bg-slate-800 text-slate-300 border-slate-700';
-
-                  const cardBorderClass =
-                    item.rarity === 'legendary'
-                      ? 'border-amber-400/60 shadow-lg shadow-amber-950/40 bg-gradient-to-b from-amber-500/10 to-slate-950'
-                      : item.rarity === 'mythic'
-                      ? 'border-pink-400/60 shadow-lg shadow-pink-950/40 bg-gradient-to-b from-pink-500/10 to-slate-950'
-                      : item.rarity === 'super_rare'
-                      ? 'border-purple-400/60 shadow-md shadow-purple-950/40 bg-gradient-to-b from-purple-500/10 to-slate-950'
-                      : item.rarity === 'rare'
-                      ? 'border-cyan-400/60 shadow-md shadow-cyan-950/40 bg-gradient-to-b from-cyan-500/10 to-slate-950'
-                      : 'border-slate-800 bg-slate-950/80';
-
-                  return (
-                    <div
-                      key={item.id}
-                      className={`p-4 rounded-2xl border flex flex-col justify-between transition-all ${cardBorderClass}`}
-                    >
-                      <div>
-                        {/* Header with rarity badge & category */}
-                        <div className="flex items-center justify-between mb-2">
-                          <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border ${rarityBadgeClass}`}>
-                            {item.rarity.replace('_', ' ')}
-                          </span>
-                          {ownedCount > 0 && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
-                              Owned: {ownedCount}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Icon & Title */}
-                        <div className="flex items-center gap-3 my-2">
-                          <span className="text-3xl p-2 bg-slate-900 rounded-xl border border-slate-800 shrink-0">
-                            {item.icon}
-                          </span>
-                          <div className="overflow-hidden">
-                            <h4 className="text-sm font-bold text-white truncate">
-                              {item.name}
-                            </h4>
-                            <span className="text-[10px] text-slate-400 capitalize">
-                              {item.category} item
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Description */}
-                        <p className="text-xs text-slate-400 line-clamp-2 my-2 leading-relaxed">
-                          {item.description}
-                        </p>
-                      </div>
-
-                      {/* Price & Buy Button */}
-                      <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between mt-2">
-                        <div className="flex items-center gap-1.5 font-bold font-mono text-amber-400">
-                          <Coins className="w-4 h-4" />
-                          <span className="text-sm">{item.cost === 0 ? 'FREE' : `${item.cost} BT`}</span>
-                        </div>
-
-                        {isTrainerUnlocked ? (
-                          <span className="text-xs font-bold text-emerald-400 flex items-center gap-1">
-                            <Check className="w-3.5 h-3.5" /> Owned
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={!canAfford}
-                            onClick={() => handleBuyShopItem(item)}
-                            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 transition-all ${
-                              canAfford
-                                ? 'bg-amber-500 text-slate-950 hover:bg-amber-400 active:scale-95 shadow-md shadow-amber-950'
-                                : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
-                            }`}
-                          >
-                            <ShoppingBag className="w-3 h-3" />
-                            <span>{item.cost === 0 ? 'Claim' : canAfford ? 'Buy' : 'Need BT'}</span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* 4. Achievements Tab */}
-          {activeTab === 'achievements' && (
-            <div className="space-y-4">
-              {/* Showcase Banner */}
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/10 via-slate-950/60 to-purple-500/10 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0">
-                    <Sparkles className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold font-display text-white flex items-center gap-2">
-                      <span>Profile Showcase Space</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40">
-                        {(account.showcasedAchievements || []).length}/3 Selected
-                      </span>
-                    </h4>
-                    <p className="text-xs text-slate-400">
-                      Pin up to 3 of your most prestigious achievements to show off directly on your trainer card!
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    sound.playButtonPress();
-                    setActiveTab('profile');
-                  }}
-                  className="px-3.5 py-1.5 rounded-xl bg-amber-500 text-slate-950 text-xs font-black hover:bg-amber-400 shadow-md transition-all shrink-0"
-                >
-                  View on Profile ➔
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {ACHIEVEMENTS_LIST.map((ach) => {
-                  const record = account.achievements[ach.id] || { progress: 0, unlocked: false };
-                  const isUnlocked = record.unlocked;
-                  const isShowcased = (account.showcasedAchievements || []).includes(ach.id);
-
-                  return (
-                    <div
-                      key={ach.id}
-                      className={`p-4 rounded-xl border flex flex-col justify-between transition-all ${
-                        isShowcased
-                          ? 'bg-amber-500/15 border-amber-400 shadow-md shadow-amber-950/30 ring-1 ring-amber-500/40'
-                          : isUnlocked
-                          ? 'bg-emerald-500/10 border-emerald-500/30 shadow-md shadow-emerald-950/20'
-                          : 'bg-slate-950/60 border-slate-800/80'
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <h4 className="text-sm font-bold font-display text-white flex items-center gap-1.5">
-                            {isUnlocked ? (
-                              <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-                            ) : (
-                              <Lock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            )}
-                            <span>{ach.title}</span>
-                          </h4>
-
-                          <div className="flex items-center gap-1.5">
-                            {isShowcased && (
-                              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 flex items-center gap-0.5">
-                                <Sparkles className="w-2.5 h-2.5" />
-                                Showcased
-                              </span>
-                            )}
-                            <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                              +{ach.rewardTrophyPoints} TP
-                            </span>
-                          </div>
-                        </div>
-                        <p className="text-xs text-slate-400 mb-2">{ach.description}</p>
-                      </div>
-
-                      {/* Reward preview & Showcase Pin Button */}
-                      <div className="pt-2 border-t border-slate-800/60 flex flex-col gap-2">
-                        <div className="flex items-center justify-between text-[11px] text-slate-400">
-                          <span>Reward:</span>
-                          <div className="flex items-center gap-2">
-                            {ach.rewardAvatarId && (
-                              <span className="text-rose-400 font-semibold">Avatar #{ach.rewardAvatarId}</span>
-                            )}
-                            {ach.rewardSongId && (
-                              <span className="text-cyan-400 font-semibold">Song Track</span>
-                            )}
-                          </div>
-                        </div>
-
-                        {isUnlocked && (
-                          <button
-                            type="button"
-                            onClick={() => handleToggleShowcase(ach.id)}
-                            className={`w-full py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
-                              isShowcased
-                                ? 'bg-amber-500/20 border border-amber-400 text-amber-300 hover:bg-rose-500/20 hover:border-rose-400 hover:text-rose-300'
-                                : (account.showcasedAchievements || []).length >= 3
-                                ? 'bg-slate-900 border border-slate-700 text-slate-400 hover:text-amber-300 hover:border-amber-500'
-                                : 'bg-amber-500/10 border border-amber-500/30 text-amber-300 hover:bg-amber-500/20'
-                            }`}
-                          >
-                            <Sparkles className="w-3.5 h-3.5" />
-                            <span>
-                              {isShowcased
-                                ? 'Showcased (Click to Remove)'
-                                : (account.showcasedAchievements || []).length >= 3
-                                ? 'Showcase Full (3/3) - Click to Swap'
-                                : '+ Pin to Profile Showcase'}
-                            </span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* REWARDS ROAD & DAILY STREAKS TAB */}
-          {activeTab === 'rewards' && (
-            <div className="space-y-4">
-              {/* Sub-tab switcher */}
-              <div className="flex items-center gap-2 p-1 bg-slate-950/80 rounded-xl border border-slate-800 max-w-sm">
-                <button
-                  id="btn-subtab-trophy-road"
-                  onClick={() => {
-                    sound.playClick();
-                    setRewardsSubTab('trophy_road');
-                  }}
-                  className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                    rewardsSubTab === 'trophy_road'
-                      ? 'bg-amber-500/20 border border-amber-500/40 text-amber-300 shadow'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Trophy className="w-3.5 h-3.5" />
-                  <span>Trophy Road</span>
-                </button>
-
-                <button
-                  id="btn-subtab-daily-streak"
-                  onClick={() => {
-                    sound.playClick();
-                    setRewardsSubTab('daily_streak');
-                  }}
-                  className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                    rewardsSubTab === 'daily_streak'
-                      ? 'bg-rose-500/20 border border-rose-500/40 text-rose-300 shadow'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Flame className="w-3.5 h-3.5" />
-                  <span>Daily Streaks</span>
-                </button>
-              </div>
-
-              {/* 1. TROPHY ROAD CONTENT */}
-              {rewardsSubTab === 'trophy_road' && (
-                <div className="space-y-4">
-                  {/* Summary Banner */}
-                  <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/20 via-slate-950 to-yellow-500/10 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0 shadow-lg">
-                        <Trophy className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h4 className="text-base font-bold font-display text-white">Trainer Trophy Road</h4>
-                          <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono font-bold border border-amber-500/30">
-                            {account.trophyPoints.toLocaleString()} Total TP
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-400 mt-0.5">
-                          Earn Trophy Points in all game modes to claim exclusive avatars, Battle Tokens, music tracks, and league frames!
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Trophy Road Milestone Ladder */}
-                  <div className="space-y-3">
-                    {TROPHY_ROAD_REWARDS.map((reward) => {
-                      const isReached = account.trophyPoints >= reward.trophies;
-                      const isClaimed = claimedMilestones.includes(reward.trophies);
-                      const pointsNeeded = Math.max(0, reward.trophies - account.trophyPoints);
-
-                      const handleClaim = () => {
-                        if (!isReached || isClaimed) return;
-                        sound.playTrophyUnlock();
-                        confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
-
-                        const nextTokens = (account.battleTokens || 0) + reward.tokens;
-                        const nextAvatars = [...(account.unlockedTrainerAvatars || [])];
-                        if (reward.rewardAvatarId && !nextAvatars.includes(String(reward.rewardAvatarId))) {
-                          nextAvatars.push(String(reward.rewardAvatarId));
-                        }
-
-                        const updatedAcc: TrainerAccount = {
-                          ...account,
-                          battleTokens: nextTokens,
-                          unlockedTrainerAvatars: nextAvatars,
-                        };
-
-                        const nextClaimed = [...claimedMilestones, reward.trophies];
-                        setClaimedMilestones(nextClaimed);
-                        try {
-                          localStorage.setItem(`claimed_milestones_${account.id}`, JSON.stringify(nextClaimed));
-                        } catch {
-                          // ignore
-                        }
-
-                        saveActiveAccount(updatedAcc);
-                        onAccountUpdated(updatedAcc);
-                      };
-
-                      return (
-                        <div
-                          key={reward.trophies}
-                          className={`p-4 rounded-2xl border transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
-                            isClaimed
-                              ? 'bg-slate-950/60 border-slate-800/80 opacity-80'
-                              : isReached
-                              ? 'bg-amber-500/15 border-amber-400/50 shadow-lg shadow-amber-950/40'
-                              : 'bg-slate-950/40 border-slate-800/50 opacity-60'
-                          }`}
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-12 h-12 rounded-2xl bg-slate-900 border border-slate-700 flex flex-col items-center justify-center shrink-0">
-                              <span className="text-base font-black font-mono text-amber-300">
-                                {reward.trophies >= 1000 ? `${reward.trophies / 1000}k` : reward.trophies}
-                              </span>
-                              <span className="text-[9px] font-bold text-slate-400 uppercase">TP</span>
-                            </div>
-
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap mb-1">
-                                <span className="text-xs font-bold text-slate-300 font-mono px-2 py-0.5 rounded-full bg-slate-900 border border-slate-700">
-                                  {reward.rankBadge}
-                                </span>
-                                <h4 className="text-sm font-bold font-display text-white truncate">
-                                  {reward.rewardTitle}
-                                </h4>
-                                <span className="text-[11px] font-bold text-amber-400">
-                                  +{reward.tokens} Tokens
-                                </span>
-                              </div>
-                              <p className="text-xs text-slate-400 line-clamp-1">{reward.description}</p>
-                            </div>
-                          </div>
-
-                          <div className="shrink-0 w-full sm:w-auto text-right">
-                            {isClaimed ? (
-                              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 text-emerald-400 text-xs font-bold border border-emerald-500/30">
-                                <CheckCircle2 className="w-4 h-4" />
-                                <span>Claimed</span>
-                              </span>
-                            ) : isReached ? (
-                              <button
-                                onClick={handleClaim}
-                                className="w-full sm:w-auto px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-amber-950/40 animate-bounce"
-                              >
-                                <Sparkles className="w-3.5 h-3.5" />
-                                <span>Claim Reward</span>
-                              </button>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-900/80 text-slate-500 text-xs font-medium border border-slate-800">
-                                <Lock className="w-3.5 h-3.5" />
-                                <span>{pointsNeeded} TP needed</span>
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* 2. DAILY STREAK CONTENT */}
-              {rewardsSubTab === 'daily_streak' && (
-                <div className="space-y-4">
-                  {/* Streak Status Card */}
-                  {(() => {
-                    const streakCount = account.dailyStreak || 1;
-                    const streakMultiplier = (1.0 + Math.min(1.0, (streakCount - 1) * 0.1)).toFixed(1);
-
-                    return (
-                      <div className="p-4 rounded-2xl bg-gradient-to-r from-rose-500/20 via-slate-950 to-amber-500/20 border border-rose-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-400 flex items-center justify-center shrink-0 shadow-lg">
-                            <Flame className="w-6 h-6 fill-current" />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h4 className="text-base font-bold font-display text-white">Daily Training Streaks</h4>
-                              <span className="text-xs px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-bold border border-rose-500/30">
-                                {streakCount}-Day Streak Active
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-400 mt-0.5">
-                              Log in every 24 hours (Midnight IST cycle) to keep your streak alive, compound score multipliers, and unlock rare rewards!
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="text-right shrink-0">
-                          <span className="text-xs text-slate-400 block">Active Multiplier:</span>
-                          <span className="text-xl font-mono font-black text-amber-300">
-                            {streakMultiplier}x Boost
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  {/* 30-Day Rewards Ladder Schedule */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {DAILY_STREAK_REWARDS.map((streakItem) => {
-                      const cur = account.dailyStreak || 1;
-                      const isCompleted = cur >= streakItem.day;
-                      const isCurrent = cur === streakItem.day;
-
-                      return (
-                        <div
-                          key={streakItem.day}
-                          className={`p-4 rounded-2xl border transition-all ${
-                            isCurrent
-                              ? 'bg-rose-500/15 border-rose-400/50 shadow-lg shadow-rose-950/40'
-                              : isCompleted
-                              ? 'bg-slate-950/60 border-slate-800 opacity-75'
-                              : 'bg-slate-950/40 border-slate-800/50 opacity-60'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-2 mb-1.5">
-                            <div className="flex items-center gap-2">
-                              <span className="w-7 h-7 rounded-xl bg-slate-900 border border-slate-700 flex items-center justify-center text-xs font-mono font-bold text-amber-300">
-                                D{streakItem.day}
-                              </span>
-                              <h4 className="text-xs sm:text-sm font-bold font-display text-white">
-                                {streakItem.title}
-                              </h4>
-                            </div>
-
-                            {isCompleted ? (
-                              <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1">
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                <span>Completed</span>
-                              </span>
-                            ) : isCurrent ? (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 animate-pulse">
-                                Today&apos;s Goal
-                              </span>
-                            ) : (
-                              <span className="text-[10px] text-slate-500 font-mono">
-                                Upcoming
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="flex items-center gap-3 text-xs text-amber-400 font-bold mb-1">
-                            <span>+{streakItem.tokens} Tokens</span>
-                            <span>•</span>
-                            <span>+{streakItem.trophyPointsBonus} TP</span>
-                            {streakItem.specialItem && (
-                              <>
-                                <span>•</span>
-                                <span className="text-purple-300 font-normal">{streakItem.specialItem}</span>
-                              </>
-                            )}
-                          </div>
-
-                          <p className="text-xs text-slate-400">{streakItem.description}</p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 4. Gym Badges Tab (ALL 9 REGIONS + SPECIAL CRESTS) */}
-          {activeTab === 'badges' && (
-            <div className="space-y-4">
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-500/10 via-slate-950/60 to-indigo-500/10 border border-purple-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/40 text-purple-400 flex items-center justify-center shrink-0">
-                    <Medal className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold font-display text-white flex items-center gap-2">
-                      <span>Official Badges of All 9 Pokémon Regions</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/40">
-                        9 Regions + Special Badges
-                      </span>
-                    </h4>
-                    <p className="text-xs text-slate-400">
-                      Master badges from Kanto, Johto, Hoenn, Sinnoh, Unova, Kalos, Alola, Galar, Paldea, plus Paldea Titans, Team Star, Battle Frontier, and Champion Crests!
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Regional & Category Filter Tabs */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
-                {['All', 'Kanto', 'Johto', 'Hoenn', 'Sinnoh', 'Unova', 'Kalos', 'Alola', 'Galar', 'Paldea', 'Paldea Titans', 'Paldea Team Star', 'Battle Frontier', 'Champion Crests'].map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => {
-                      sound.playClick();
-                      setBadgeRegion(cat);
-                    }}
-                    className={`px-3 py-1.5 rounded-xl font-bold transition-all shrink-0 ${
-                      badgeRegion === cat
-                        ? 'bg-purple-500/25 text-purple-300 border border-purple-500/40 shadow-sm'
-                        : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
-              </div>
-
-              {/* Badges Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 max-h-[55vh] overflow-y-auto pr-1">
-                {(() => {
-                  const displayBadges: GymBadgeInfo[] = [];
-                  Object.entries(ALL_REGIONAL_BADGES).forEach(([regionKey, badges]) => {
-                    if (badgeRegion === 'All' || badgeRegion === regionKey) {
-                      displayBadges.push(...badges);
-                    }
-                  });
-
-                  return displayBadges.map((badge) => {
-                    const isEarned = !!account.achievements[badge.id]?.unlocked;
-                    return (
-                      <div
-                        key={badge.id}
-                        className={`p-4 rounded-xl border flex items-start gap-3.5 transition-all ${
-                          isEarned
-                            ? 'bg-purple-500/15 border-purple-400/50 shadow-md shadow-purple-950/30'
-                            : 'bg-slate-950/60 border-slate-800/80 opacity-60'
-                        }`}
-                      >
-                        <div className="w-14 h-14 rounded-2xl bg-slate-900 border border-slate-700 flex items-center justify-center text-3xl select-none shrink-0 shadow-inner">
-                          {badge.emoji}
-                        </div>
-
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between gap-2 mb-1">
-                            <h4 className="text-sm font-bold font-display text-white flex items-center gap-1.5 truncate">
-                              {isEarned ? (
-                                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                              ) : (
-                                <Lock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                              )}
-                              <span>{badge.name}</span>
-                            </h4>
-                            <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
-                              +{badge.rewardTrophyPoints} TP
-                            </span>
-                          </div>
-
-                          <div className="text-[11px] text-purple-300 font-semibold mb-1">
-                            {badge.gymLeader} • {badge.town} ({badge.region})
-                          </div>
-
-                          <p className="text-xs text-slate-400 mb-2">{badge.description}</p>
-
-                          <div className="flex items-center justify-between text-[11px] pt-1.5 border-t border-slate-800/60">
-                            <span className="text-slate-500">Type: {badge.type}</span>
-                            <span className={isEarned ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
-                              {isEarned ? '★ Conquered & Displayed' : 'Locked (Battle in Arena)'}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  });
-                })()}
-              </div>
-            </div>
-          )}
-
-          {/* 5. Friend List Tab */}
+          {/* 3. Friends Tab with 3 Subtabs (Friends, Received, Sent) */}
           {activeTab === 'friends' && (
             <div className="space-y-4">
-              {/* User's Own Unique Username Card */}
+              {/* User's Trainer Identity & Quick QR Buttons */}
               <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center shrink-0">
                     <Users className="w-5 h-5" />
                   </div>
                   <div>
-                    <h4 className="text-sm font-bold font-display text-white flex items-center gap-2">
-                      <span>Your Trainer Username</span>
+                    <h4 className="text-sm font-bold font-display text-white flex items-center gap-2 flex-wrap">
+                      <span>Trainer ID & Username</span>
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40">
-                        Unique Trainer ID
+                        Max 100 Friends
                       </span>
                     </h4>
-                    <p className="text-xs text-slate-400">
-                      Share your unique username with friends so they can add you to their friend network:
-                    </p>
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      <span className="px-2.5 py-0.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-300 font-mono text-xs">
+                        ID: <strong className="text-amber-400">{account.id}</strong>
+                      </span>
+                      <span className="px-2.5 py-0.5 rounded-lg bg-slate-900 border border-purple-500/40 text-purple-300 font-mono text-xs font-bold">
+                        @{account.username || account.displayName.toLowerCase().replace(/\s+/g, '_')}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <span className="px-3 py-1.5 rounded-xl bg-slate-900 border border-purple-500/40 text-purple-300 font-mono font-bold text-xs">
-                    @{account.username || account.displayName.toLowerCase().replace(/\s+/g, '_')}
-                  </span>
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-end flex-wrap">
                   <button
                     type="button"
-                    onClick={handleCopyUsername}
-                    className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold flex items-center gap-1.5 transition-all"
+                    onClick={() => {
+                      sound.playButtonPress();
+                      setQrActiveTab('my_qr');
+                      setIsQrModalOpen(true);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold flex items-center gap-1.5 transition-all shadow-md shadow-cyan-950/30"
                   >
-                    {copiedUsername ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedUsername ? 'Copied!' : 'Copy'}</span>
+                    <QrCode className="w-3.5 h-3.5" />
+                    <span>My QR Code</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sound.playButtonPress();
+                      setQrActiveTab('scan_qr');
+                      setIsQrModalOpen(true);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>Scan / Add QR</span>
                   </button>
                 </div>
               </div>
 
-              {/* Add Friend by Specific Username Form */}
-              <form onSubmit={handleAddFriend} className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-3">
-                <h4 className="text-sm font-bold font-display text-white flex items-center gap-1.5">
-                  <UserPlus className="w-4 h-4 text-emerald-400" />
-                  <span>Add Friend by Username</span>
-                </h4>
+              {/* Add Friend by ID or Username */}
+              <form onSubmit={handleAddFriendSubmit} className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-bold font-display text-white flex items-center gap-1.5">
+                    <UserPlus className="w-4 h-4 text-emerald-400" />
+                    <span>Send Friend Request</span>
+                  </h4>
+                  <span className="text-[11px] text-slate-400 font-mono">
+                    {(account.friends || []).length}/100 Friends
+                  </span>
+                </div>
                 <p className="text-xs text-slate-400">
-                  Type any trainer&apos;s unique username to add them to your friend roster. All usernames in Pokémon Arena are completely unique!
+                  Search by Trainer ID (e.g. <span className="font-mono text-slate-300">{account.id}</span>) or unique <span className="text-purple-300 font-mono">@username</span>.
                 </p>
 
                 <div className="flex gap-2">
@@ -1941,18 +1443,30 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                         setFriendError('');
                         setFriendSuccess('');
                       }}
-                      placeholder="Type specific username (e.g. Red, Champion Cynthia, Ash)..."
-                      className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 text-xs font-medium focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                      placeholder="Enter Trainer ID or @username..."
+                      disabled={(account.friends || []).length >= 100}
+                      className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 text-xs font-medium focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 disabled:opacity-50"
                     />
                   </div>
                   <button
                     type="submit"
-                    className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md transition-all shrink-0"
+                    disabled={friendActionLoading === 'send' || !newFriendName.trim() || (account.friends || []).length >= 100}
+                    className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 disabled:opacity-40 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md transition-all shrink-0"
                   >
-                    <UserPlus className="w-3.5 h-3.5" />
-                    <span>Add Friend</span>
+                    {friendActionLoading === 'send' ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Send className="w-3.5 h-3.5" />
+                    )}
+                    <span>Send Request</span>
                   </button>
                 </div>
+
+                {(account.friends || []).length >= 100 && (
+                  <p className="text-xs text-amber-400 font-medium">
+                    Maximum limit of 100 friends reached! Remove an existing friend to add more.
+                  </p>
+                )}
 
                 {friendError && (
                   <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
@@ -1969,53 +1483,607 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                 )}
               </form>
 
-              {/* Friends Roster */}
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Your Friends ({(account.friends || []).length})
-                  </h4>
-                </div>
+              {/* 3 Subtabs Navigation: Friends, Received, Sent */}
+              <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    sound.playButtonPress();
+                    setFriendSubTab('friends');
+                  }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+                    friendSubTab === 'friends'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Friends ({(account.friends || []).length}/100)</span>
+                </button>
 
-                {(!account.friends || account.friends.length === 0) ? (
-                  <div className="p-6 rounded-2xl bg-slate-950/40 border border-dashed border-slate-800 text-center">
-                    <Users className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                    <p className="text-xs text-slate-400 mb-2">You don&apos;t have any friends added yet.</p>
-                    <p className="text-[11px] text-slate-500">
-                      Use the form above to add your friends by their unique usernames!
-                    </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    sound.playButtonPress();
+                    setFriendSubTab('received');
+                  }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all relative ${
+                    friendSubTab === 'received'
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>Received Friend Requests</span>
+                  {receivedRequests.length > 0 && (
+                    <span className="w-4 h-4 rounded-full bg-cyan-500 text-slate-950 font-black text-[10px] flex items-center justify-center">
+                      {receivedRequests.length}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    sound.playButtonPress();
+                    setFriendSubTab('sent');
+                  }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all relative ${
+                    friendSubTab === 'sent'
+                      ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Sent Friend Requests</span>
+                  {sentRequests.length > 0 && (
+                    <span className="w-4 h-4 rounded-full bg-purple-500 text-white font-black text-[10px] flex items-center justify-center">
+                      {sentRequests.length}
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* Subtab 1: Friends Roster */}
+              {friendSubTab === 'friends' && (
+                <div className="space-y-2.5">
+                  {(!account.friends || account.friends.length === 0) ? (
+                    <div className="p-8 rounded-2xl bg-slate-950/40 border border-dashed border-slate-800 text-center">
+                      <Users className="w-9 h-9 text-slate-600 mx-auto mb-2" />
+                      <p className="text-xs text-slate-400 mb-1 font-semibold">You don&apos;t have any friends added yet.</p>
+                      <p className="text-[11px] text-slate-500">
+                        Share your unique QR code or enter a Trainer ID / @username above to add friends!
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {account.friends.map((friendName) => {
+                        const isOnline = Boolean(onlineStatusMap[friendName]);
+                        return (
+                        <div
+                          key={friendName}
+                          className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between hover:border-slate-700 transition-all gap-2"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="relative shrink-0">
+                              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 text-cyan-300 flex items-center justify-center font-bold font-display text-sm">
+                                {friendName.charAt(0).toUpperCase()}
+                              </div>
+                              <span
+                                className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-slate-950 ${
+                                  isOnline
+                                    ? 'bg-emerald-400 shadow-sm shadow-emerald-500/60 animate-pulse'
+                                    : 'bg-slate-600'
+                                }`}
+                                title={isOnline ? 'Online' : 'Offline'}
+                              />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <h5 className="text-xs sm:text-sm font-bold text-white truncate">{friendName}</h5>
+                                {isOnline ? (
+                                  <span className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.5 rounded-full">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                    Online
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[9px] text-slate-400 bg-slate-900 border border-slate-800 px-1.5 py-0.5 rounded-full">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-slate-600" />
+                                    Offline
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-purple-300 font-mono truncate block">
+                                @{friendName.toLowerCase().replace(/\s+/g, '_')}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {/* 1v1 Battle Challenge Button */}
+                            <button
+                              type="button"
+                              onClick={() => handleChallengeFriend(friendName)}
+                              disabled={friendActionLoading === `challenge_${friendName}`}
+                              className="px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-bold flex items-center gap-1 transition-all"
+                              title="Challenge friend to 1v1 Battle"
+                            >
+                              <Swords className="w-3.5 h-3.5" />
+                              <span>Challenge</span>
+                            </button>
+
+                            {/* Remove Friend Button */}
+                            {confirmRemoveFriend === friendName ? (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveFriend(friendName)}
+                                  className="px-2 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white text-[11px] font-bold"
+                                >
+                                  Confirm
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmRemoveFriend(null)}
+                                  className="px-2 py-1 rounded-lg bg-slate-800 text-slate-400 text-[11px]"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmRemoveFriend(friendName)}
+                                className="text-slate-500 hover:text-rose-400 p-1.5 rounded-lg hover:bg-rose-500/10 transition-all"
+                                title="Remove Friend"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Subtab 2: Received Friend Requests */}
+              {friendSubTab === 'received' && (
+                <div className="space-y-2.5">
+                  {receivedRequests.length === 0 ? (
+                    <div className="p-8 rounded-2xl bg-slate-950/40 border border-dashed border-slate-800 text-center">
+                      <Mail className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                      <p className="text-xs text-slate-400 font-semibold">no friend requests received</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {receivedRequests.map((req) => (
+                        <div
+                          key={req.id}
+                          className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between gap-3"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500/20 to-emerald-500/20 border border-cyan-500/30 text-cyan-300 flex items-center justify-center font-bold text-sm">
+                              {req.fromDisplayName.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h5 className="text-sm font-bold text-white">{req.fromDisplayName}</h5>
+                                <span className="text-[10px] text-purple-300 font-mono">@{req.fromUsername}</span>
+                              </div>
+                              <p className="text-[10px] text-slate-400">
+                                Sent a friend request • {new Date(req.createdAt).toLocaleDateString()}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleRespondFriendRequest(req.id, 'accept')}
+                              disabled={friendActionLoading === req.id}
+                              className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold flex items-center gap-1 transition-all shadow-sm"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Accept</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleRespondFriendRequest(req.id, 'reject')}
+                              disabled={friendActionLoading === req.id}
+                              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-rose-950/60 hover:text-rose-300 text-slate-300 text-xs font-semibold flex items-center gap-1 transition-all border border-slate-700"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              <span>Reject</span>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Subtab 3: Sent Friend Requests */}
+              {friendSubTab === 'sent' && (
+                <div className="space-y-2.5">
+                  {sentRequests.length === 0 ? (
+                    <div className="p-8 rounded-2xl bg-slate-950/40 border border-dashed border-slate-800 text-center">
+                      <Send className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                      <p className="text-xs text-slate-400 font-semibold">u haven&apos;t send any friend requests</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {sentRequests.map((req) => (
+                        <div
+                          key={req.id}
+                          className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between gap-3"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-xl bg-purple-500/20 border border-purple-500/30 text-purple-300 flex items-center justify-center font-bold text-xs">
+                              @{req.toUsername.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h5 className="text-xs sm:text-sm font-bold text-white">To: @{req.toUsername}</h5>
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                  Pending approval
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-400">
+                                Dispatched • {new Date(req.createdAt).toLocaleDateString()}
+                              </p>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleCancelSentRequest(req.id)}
+                            disabled={friendActionLoading === req.id}
+                            className="text-xs text-slate-400 hover:text-rose-400 px-2.5 py-1.5 rounded-lg hover:bg-rose-500/10 border border-slate-800 hover:border-rose-500/30 transition-all flex items-center gap-1"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Cancel</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 4. Battle History Tab (FIFO 25 Battles) */}
+          {activeTab === 'battles' && (
+            <div className="space-y-4">
+              {/* Summary Stats */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800 text-center">
+                  <div className="text-[10px] uppercase font-bold text-slate-400">Total Battles</div>
+                  <div className="text-lg font-black font-display text-white mt-0.5">
+                    {(account.battleHistory || []).length}
+                    <span className="text-xs text-slate-500 font-mono"> / 25</span>
                   </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {account.friends.map((friendName) => (
+                </div>
+                <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-center">
+                  <div className="text-[10px] uppercase font-bold text-emerald-400">Victories</div>
+                  <div className="text-lg font-black font-display text-emerald-400 mt-0.5">
+                    {(account.battleHistory || []).filter((b) => b.result === 'victory').length}
+                  </div>
+                </div>
+                <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-center">
+                  <div className="text-[10px] uppercase font-bold text-rose-400">Defeats</div>
+                  <div className="text-lg font-black font-display text-rose-400 mt-0.5">
+                    {(account.battleHistory || []).filter((b) => b.result === 'defeat').length}
+                  </div>
+                </div>
+                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-center">
+                  <div className="text-[10px] uppercase font-bold text-amber-400">Win Rate</div>
+                  <div className="text-lg font-black font-display text-amber-300 mt-0.5">
+                    {(account.battleHistory || []).length > 0
+                      ? `${Math.round(
+                          ((account.battleHistory || []).filter((b) => b.result === 'victory').length /
+                            (account.battleHistory || []).length) *
+                            100
+                        )}%`
+                      : '0%'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                <div className="flex items-center gap-2">
+                  <Swords className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>Your last 25 battles are saved in FIFO sequence (first in, first out).</span>
+                </div>
+                <span className="text-[11px] font-mono text-slate-500 hidden sm:inline">
+                  Max 25 logs
+                </span>
+              </div>
+
+              {/* Battles List */}
+              {(!account.battleHistory || account.battleHistory.length === 0) ? (
+                <div className="p-10 rounded-2xl bg-slate-950/40 border border-dashed border-slate-800 text-center flex flex-col items-center justify-center">
+                  <Swords className="w-10 h-10 text-slate-600 mb-2" />
+                  <h4 className="text-sm font-bold text-slate-300">No Battles in Log Yet</h4>
+                  <p className="text-xs text-slate-500 mt-1 max-w-sm">
+                    Challenge friends to 1v1 duels or enter the online PvP arena to record your match history!
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {account.battleHistory.map((b, idx) => {
+                    const isVictory = b.result === 'victory';
+                    const isDraw = b.result === 'draw';
+                    return (
                       <div
-                        key={friendName}
-                        className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between hover:border-slate-700 transition-all"
+                        key={b.id || `battle_${idx}`}
+                        className={`p-3.5 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all ${
+                          isVictory
+                            ? 'bg-emerald-500/10 border-emerald-500/30 hover:border-emerald-500/50'
+                            : isDraw
+                            ? 'bg-amber-500/10 border-amber-500/30 hover:border-amber-500/50'
+                            : 'bg-rose-500/10 border-rose-500/30 hover:border-rose-500/50'
+                        }`}
                       >
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 text-cyan-300 flex items-center justify-center font-bold font-display text-sm">
-                            {friendName.charAt(0).toUpperCase()}
-                          </div>
+                          <span
+                            className={`px-2.5 py-1 rounded-xl text-xs font-black uppercase tracking-wider ${
+                              isVictory
+                                ? 'bg-emerald-500 text-slate-950 shadow-sm shadow-emerald-500/30'
+                                : isDraw
+                                ? 'bg-amber-500 text-slate-950'
+                                : 'bg-rose-600 text-white'
+                            }`}
+                          >
+                            {b.result}
+                          </span>
+
                           <div>
-                            <h5 className="text-sm font-bold text-white">{friendName}</h5>
-                            <span className="text-[11px] text-purple-300 font-mono">
-                              @{friendName.toLowerCase().replace(/\s+/g, '_')}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h5 className="text-sm font-bold text-white">vs. {b.opponentName}</h5>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-medium capitalize">
+                                {b.mode || '1v1 Duel'}
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-slate-400">
+                              {new Date(b.timestamp).toLocaleString()}
                             </span>
                           </div>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveFriend(friendName)}
-                          className="text-xs text-slate-500 hover:text-rose-400 px-2.5 py-1 rounded-lg hover:bg-rose-500/10 border border-transparent hover:border-rose-500/30 transition-all"
-                          title="Remove Friend"
-                        >
-                          Remove
-                        </button>
+                        <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-4">
+                          <div className="text-left sm:text-right">
+                            <div className="text-xs text-slate-400">Final Score</div>
+                            <div className="text-sm font-black font-mono">
+                              <span className={isVictory ? 'text-emerald-400' : 'text-slate-300'}>
+                                {b.playerScore}
+                              </span>
+                              <span className="text-slate-500 mx-1">-</span>
+                              <span className={!isVictory && !isDraw ? 'text-rose-400' : 'text-slate-400'}>
+                                {b.opponentScore}
+                              </span>
+                            </div>
+                          </div>
+
+                          {(b.rewardTokens || b.rewardTP) ? (
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {b.rewardTokens ? (
+                                <span className="text-[11px] px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 font-mono font-bold border border-amber-500/40">
+                                  +{b.rewardTokens} BT
+                                </span>
+                              ) : null}
+                              {b.rewardTP ? (
+                                <span className="text-[11px] px-2 py-0.5 rounded-lg bg-cyan-500/20 text-cyan-300 font-mono font-bold border border-cyan-500/40">
+                                  +{b.rewardTP} TP
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
-                    ))}
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* QR Code & Scanner Modal */}
+          {isQrModalOpen && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-3xl p-5 space-y-4 shadow-2xl">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <QrCode className="w-5 h-5 text-cyan-400" />
+                    <h3 className="text-base font-bold text-white font-display">Friend QR Code</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsQrModalOpen(false)}
+                    className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Switcher: My QR vs Scan/Enter */}
+                <div className="flex gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setQrActiveTab('my_qr')}
+                    className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      qrActiveTab === 'my_qr'
+                        ? 'bg-cyan-500 text-slate-950 shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    My QR Code
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQrActiveTab('scan_qr')}
+                    className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      qrActiveTab === 'scan_qr'
+                        ? 'bg-cyan-500 text-slate-950 shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Scan / Add by QR
+                  </button>
+                </div>
+
+                {qrActiveTab === 'my_qr' ? (
+                  <div className="text-center space-y-3 py-1">
+                    <div className="p-4 bg-slate-950 rounded-2xl border-2 border-cyan-500/40 inline-block mx-auto shadow-lg shadow-cyan-950/40">
+                      <QRCodeSVG
+                        value={`${window.location.origin}${window.location.pathname}?addFriend=${encodeURIComponent(account.username || account.id)}`}
+                        size={170}
+                        bgColor="#020617"
+                        fgColor="#38bdf8"
+                        level="M"
+                      />
+                    </div>
+
+                    <div>
+                      <h4 className="text-sm font-bold text-white">{account.displayName}</h4>
+                      <p className="text-xs text-purple-300 font-mono">
+                        @{account.username || account.displayName.toLowerCase().replace(/\s+/g, '_')}
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-1">Trainer ID: {account.id}</p>
+                    </div>
+
+                    <div className="flex gap-2 justify-center">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          sound.playButtonPress();
+                          navigator.clipboard.writeText(account.id);
+                          setCopiedUserId(true);
+                          setTimeout(() => setCopiedUserId(false), 2000);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5"
+                      >
+                        {copiedUserId ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copiedUserId ? 'ID Copied!' : 'Copy ID'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          sound.playButtonPress();
+                          const link = `${window.location.origin}${window.location.pathname}?addFriend=${encodeURIComponent(account.username || account.id)}`;
+                          navigator.clipboard.writeText(link);
+                          setCopiedLink(true);
+                          setTimeout(() => setCopiedLink(false), 2000);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-1.5"
+                      >
+                        {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copiedLink ? 'Link Copied!' : 'Copy Link'}</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3 py-1">
+                    <p className="text-xs text-slate-300">
+                      Scan a trainer&apos;s QR code or paste their friend link / Trainer ID below to add them instantly:
+                    </p>
+
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        value={scannedInput}
+                        onChange={(e) => setScannedInput(e.target.value)}
+                        placeholder="Paste QR code text, link, or Trainer ID..."
+                        className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white placeholder-slate-500 text-xs font-medium focus:outline-none focus:border-cyan-500"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          let clean = scannedInput.trim();
+                          if (clean.includes('addFriend=')) {
+                            try {
+                              const url = new URL(clean, window.location.origin);
+                              clean = url.searchParams.get('addFriend') || clean;
+                            } catch {
+                              // ignore
+                            }
+                          }
+                          if (clean) {
+                            handleSendFriendRequest(clean);
+                            setIsQrModalOpen(false);
+                          }
+                        }}
+                        disabled={!scannedInput.trim()}
+                        className="w-full py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-40 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 shadow"
+                      >
+                        <UserPlus className="w-4 h-4" />
+                        <span>Send Friend Request Now</span>
+                      </button>
+                    </div>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* 1v1 Battle Challenge Dispatched Dialog */}
+          {challengeRoomInfo && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="w-full max-w-sm bg-slate-900 border-2 border-amber-500/50 rounded-3xl p-6 text-center space-y-4 shadow-2xl">
+                <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center mx-auto">
+                  <Swords className="w-6 h-6" />
+                </div>
+
+                <div>
+                  <h3 className="text-lg font-bold font-display text-white">1v1 Battle Dispatched!</h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Challenged <strong className="text-amber-300">{challengeRoomInfo.friendName}</strong> to an Extreme 1v1 Battle!
+                  </p>
+                </div>
+
+                <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800">
+                  <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1">Battle Room Code</span>
+                  <span className="text-xl font-mono font-black text-amber-400 tracking-wider">
+                    {challengeRoomInfo.roomCode}
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sound.playTrophyUnlock();
+                      if (onStartDuelWithFriend) {
+                        onStartDuelWithFriend(challengeRoomInfo.friendName, challengeRoomInfo.roomCode);
+                      }
+                      setChallengeRoomInfo(null);
+                      onClose();
+                    }}
+                    className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-950/40"
+                  >
+                    <Swords className="w-4 h-4" />
+                    <span>Enter Battle Arena Now</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(challengeRoomInfo.roomCode);
+                      sound.playButtonPress();
+                      setChallengeRoomInfo(null);
+                    }}
+                    className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold"
+                  >
+                    Copy Room Code & Close
+                  </button>
+                </div>
               </div>
             </div>
           )}

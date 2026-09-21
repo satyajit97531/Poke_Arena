@@ -294,3 +294,7 @@ export const TRAINING_BOUNTIES_REWARDS: TrainingBountyReward[] = [
     highlight: true,
   },
 ];
+
+// Aliases for compatibility
+export const DAILY_STREAK_REWARDS = TRAINING_BOUNTIES_REWARDS;
+export type DailyStreakReward = TrainingBountyReward;

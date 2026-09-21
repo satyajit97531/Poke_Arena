@@ -6,20 +6,17 @@ import { BattleMatchup, generateRandomMatchup } from '../../utils/battleEngine';
 import { sound } from '../../utils/audio';
 
 interface BattlePredictorGameProps {
-  difficulty?: GameDifficulty;
   onScoreEarned: (points: number, isPerfect: boolean) => void;
   onAdvanceMilestone: () => void;
 }
 
 export const BattlePredictorGame: React.FC<BattlePredictorGameProps> = ({
-  difficulty = 'normal',
   onScoreEarned,
   onAdvanceMilestone,
 }) => {
-  const isExtreme = difficulty === 'extreme';
-  const timeLimit = isExtreme ? 30 : 20;
+  const timeLimit = 20;
 
-  const [matchup, setMatchup] = useState<BattleMatchup>(() => generateRandomMatchup(isExtreme));
+  const [matchup, setMatchup] = useState<BattleMatchup>(() => generateRandomMatchup());
   const [selectedWinner, setSelectedWinner] = useState<'A' | 'B' | null>(null);
   const [hasRevealed, setHasRevealed] = useState(false);
   const [roundNumber, setRoundNumber] = useState(1);
@@ -82,7 +79,7 @@ export const BattlePredictorGame: React.FC<BattlePredictorGameProps> = ({
 
   const handleNextMatch = () => {
     sound.playButtonPress();
-    setMatchup(generateRandomMatchup(isExtreme));
+    setMatchup(generateRandomMatchup());
     setSelectedWinner(null);
     setHasRevealed(false);
     setTimeLeft(timeLimit);

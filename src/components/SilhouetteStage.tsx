@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Clock, Sparkles, Eye, Compass, Info, Target, Scissors, Zap, Skull, ShieldCheck } from 'lucide-react';
+import { Clock, Sparkles, Eye, Compass, Info, Target, Scissors, Zap, Skull, ShieldCheck, Flame } from 'lucide-react';
 import { GameDifficulty, MainGameMode, Pokemon, ShadowCropType } from '../types/pokemon';
 import { POKEMON_TYPES, REGIONS } from '../utils/pokemonTypes';
 import { getExtremeClues } from '../utils/extremeClues';
@@ -191,43 +191,52 @@ export const SilhouetteStage: React.FC<SilhouetteStageProps> = ({
           )}
         </AnimatePresence>
 
-        {/* Pokemon Image (Silhouette vs Revealed with Crop / Zoom) OR Extreme Dossier */}
+        {/* Pokemon Image (Silhouette vs Revealed with Crop / Zoom) OR Extreme/Menacing Dossier */}
         <div className="relative z-10 w-full h-full flex items-center justify-center overflow-hidden">
-          {!isRevealed && difficulty === 'extreme' ? (
+          {!isRevealed && (difficulty === 'extreme' || difficulty === 'menacing') ? (
             <div className="relative z-10 w-full h-full flex flex-col items-center justify-center p-2 sm:p-4 text-center">
-              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-300 text-xs font-bold font-display uppercase tracking-wider mb-2">
-                <Skull className="w-3.5 h-3.5 text-purple-400" />
-                <span>Extreme Classified Dossier</span>
-              </div>
+              {difficulty === 'menacing' ? (
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-500/20 border border-red-500/40 text-red-300 text-xs font-bold font-display uppercase tracking-wider mb-2">
+                  <Flame className="w-3.5 h-3.5 text-red-400" />
+                  <span>Menacing Classified Dossier</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-300 text-xs font-bold font-display uppercase tracking-wider mb-2">
+                  <Skull className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Extreme Classified Dossier</span>
+                </div>
+              )}
 
-              <div className="w-full max-w-sm bg-slate-950/80 border border-purple-500/30 rounded-xl p-3 shadow-inner grid grid-cols-2 gap-2 text-left text-xs">
+              <div className={`w-full max-w-sm bg-slate-950/80 border ${difficulty === 'menacing' ? 'border-red-500/30' : 'border-purple-500/30'} rounded-xl p-3 shadow-inner grid grid-cols-2 gap-2 text-left text-xs`}>
                 <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
                   <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Body Color</span>
-                  <span className="text-purple-200 font-semibold text-xs leading-tight">{extremeClues.bodyColor}</span>
+                  <span className={`${difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'} font-semibold text-xs leading-tight`}>{extremeClues.bodyColor}</span>
                 </div>
                 <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
                   <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Has Wings?</span>
-                  <span className="text-purple-200 font-semibold text-xs leading-tight">{extremeClues.hasWings}</span>
+                  <span className={`${difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'} font-semibold text-xs leading-tight`}>{extremeClues.hasWings}</span>
                 </div>
                 <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
                   <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Body Stance</span>
-                  <span className="text-purple-200 font-semibold text-xs leading-tight">{extremeClues.bodyStance}</span>
+                  <span className={`${difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'} font-semibold text-xs leading-tight`}>{extremeClues.bodyStance}</span>
                 </div>
                 <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
                   <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Tail Feature</span>
-                  <span className="text-purple-200 font-semibold text-xs leading-tight">{extremeClues.hasTail}</span>
+                  <span className={`${difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'} font-semibold text-xs leading-tight`}>{extremeClues.hasTail}</span>
                 </div>
                 <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
                   <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Weight Tier</span>
-                  <span className="text-purple-200 font-semibold text-xs leading-tight">{extremeClues.weightClass}</span>
+                  <span className={`${difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'} font-semibold text-xs leading-tight`}>{extremeClues.weightClass}</span>
                 </div>
                 <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
                   <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Height Tier</span>
-                  <span className="text-purple-200 font-semibold text-xs leading-tight">{extremeClues.heightClass}</span>
+                  <span className={`${difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'} font-semibold text-xs leading-tight`}>{extremeClues.heightClass}</span>
                 </div>
               </div>
-              <p className="text-[11px] text-purple-300/80 mt-2 font-medium">
-                No silhouette or options! Type the exact Pokémon name below.
+              <p className={`text-[11px] ${difficulty === 'menacing' ? 'text-red-300/80' : 'text-purple-300/80'} mt-2 font-medium`}>
+                {difficulty === 'menacing'
+                  ? 'Zero options provided! Type the exact Pokémon name below.'
+                  : 'Classified dossier clues revealed! Choose from 4 options below.'}
               </p>
             </div>
           ) : (

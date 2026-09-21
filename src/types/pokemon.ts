@@ -31,7 +31,7 @@ export type RegionId =
   | 'paldea'
   | 'hisui';
 
-export type GameDifficulty = 'easy' | 'medium' | 'hard' | 'extreme';
+export type GameDifficulty = 'easy' | 'medium' | 'hard' | 'extreme' | 'menacing';
 
 export type DifficultyMode = 'options' | 'master';
 
@@ -252,6 +252,14 @@ export interface TrainerAccount {
   trophies: Record<string, { progress: number; unlocked: boolean; unlockedAt?: string }>;
   showcasedAchievements?: string[];
   friends?: string[];
+  // Battle History (FIFO, maximum 25 battles)
+  battleHistory?: BattleRecord[];
+  // Daily Missions resetting every 24 hours IST
+  dailyMissions?: {
+    dateIST: string;
+    missions: Record<string, { progress: number; completed: boolean; claimed: boolean }>;
+    allClaimed?: boolean;
+  };
   // Daily Streak in Indian Standard Time (IST - UTC+5:30)
   dailyStreak: number;
   lastLoginDateIST: string;
@@ -260,7 +268,21 @@ export interface TrainerAccount {
   battleTokens: number;
   inventory: Record<string, number>; // item_id -> quantity
   claimedFreeShopDateIST?: string;
+  claimedFreeShopItems?: Record<string, string>; // item_id -> dateString YYYY-MM-DD in IST
   createdAt: string;
+}
+
+export interface BattleRecord {
+  id: string;
+  opponentName: string;
+  opponentAvatarId?: number | string;
+  playerScore: number;
+  opponentScore: number;
+  result: 'victory' | 'defeat' | 'draw';
+  mode: string;
+  timestamp: string;
+  rewardTokens?: number;
+  rewardTP?: number;
 }
 
 export interface DuelRoomConfig {
@@ -278,3 +300,27 @@ export interface DuelRoomConfig {
   currentRound: number;
   status: 'waiting' | 'in_progress' | 'completed';
 }
+
+export interface FriendRequest {
+  id: string;
+  fromUserId: string;
+  fromUsername: string;
+  fromDisplayName: string;
+  fromAvatar?: number | string;
+  toUserId: string;
+  toUsername: string;
+  toDisplayName: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  createdAt: number;
+}
+
+export interface BattleChallenge {
+  id: string;
+  fromUsername: string;
+  fromDisplayName: string;
+  toUsername: string;
+  roomCode: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  createdAt: number;
+}
+

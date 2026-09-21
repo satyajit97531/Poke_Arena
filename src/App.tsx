@@ -1,15 +1,24 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import confetti from 'canvas-confetti';
-import { Target, Crown, Play, Sparkles, Clock, Flame, Zap } from 'lucide-react';
+import { Target, Crown, Play, Sparkles, Clock, Flame, Zap, Swords } from 'lucide-react';
 import { Header } from './components/Header';
 import { SilhouetteStage } from './components/SilhouetteStage';
 import { AnswerOptions } from './components/AnswerOptions';
 import { ModeSelector } from './components/ModeSelector';
 import { DifficultySelector } from './components/DifficultySelector';
 import { ProfileModal } from './components/ProfileModal';
+import { PokeMartModal } from './components/PokeMartModal';
+import { GymBadgesModal } from './components/GymBadgesModal';
+import { AchievementsModal } from './components/AchievementsModal';
 import { SongSelectorModal } from './components/SongSelectorModal';
 import { ScoreboardModal } from './components/ScoreboardModal';
 import { GameOverModal } from './components/GameOverModal';
+import { TrophyRoomModal } from './components/TrophyRoomModal';
+import { DailyMissionsModal } from './components/DailyMissionsModal';
+import { TrophyRoadPanel } from './components/mainScreen/TrophyRoadPanel';
+import { ShopPanel } from './components/mainScreen/ShopPanel';
+import { BadgesPanel } from './components/mainScreen/BadgesPanel';
+import { AchievementsPanel } from './components/mainScreen/AchievementsPanel';
 import { AuthGate } from './components/AuthGate';
 
 // Sub-Game Modes
@@ -22,6 +31,7 @@ import { Duel1v1Game } from './components/modes/Duel1v1Game';
 import { BattlePredictorGame } from './components/modes/BattlePredictorGame';
 
 import {
+  BattleRecord,
   DifficultyMode,
   GameDifficulty,
   HighScoreRecord,
@@ -33,14 +43,18 @@ import {
   TrainerAccount,
   Trophy,
 } from './types/pokemon';
+import { INITIAL_TROPHIES } from './data/trophies';
 import { calculateScore, generateQuestion } from './utils/gameEngine';
 import {
   addHighScore,
   getStoredHighScores,
 } from './utils/storage';
-import { getActiveAccount, saveActiveAccount, evaluateAchievements, createDefaultAccount } from './utils/accounts';
+import { getActiveAccount, saveActiveAccount, evaluateAchievements, createDefaultAccount, addBattleToHistory } from './utils/accounts';
 import { sound } from './utils/audio';
 import { checkAndUpdateDailyStreak } from './utils/dailyStreak';
+import { recordDailyMissionEvent } from './utils/dailyMissions';
+import { isBoostActive } from './utils/itemBoosts';
+import { addExpToAccount } from './utils/expSystem';
 
 export default function App() {
   // Active Account State (Supports multiple accounts, customizable avatar, achievements, level & limitless trophies)
@@ -55,6 +69,15 @@ export default function App() {
 
   // Modals State
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [profileInitialTab, setProfileInitialTab] = useState<'profile' | 'avatars' | 'friends' | 'battles'>('profile');
+  const [activeDuelRoomCode, setActiveDuelRoomCode] = useState<string | null>(null);
+  const [isDailyMissionsOpen, setIsDailyMissionsOpen] = useState(false);
+  const [isPokeMartOpen, setIsPokeMartOpen] = useState(false);
+  const [isGymBadgesOpen, setIsGymBadgesOpen] = useState(false);
+  const [gymBadgesRegion, setGymBadgesRegion] = useState<string>('All');
+  const [isAchievementsOpen, setIsAchievementsOpen] = useState(false);
+  const [isTrophyModalOpen, setIsTrophyModalOpen] = useState(false);
+  const [trophyModalView, setTrophyModalView] = useState<'vault' | 'trophy_road' | 'bounties'>('trophy_road');
   const [isJukeboxOpen, setIsJukeboxOpen] = useState(false);
   const [isScoreboardOpen, setIsScoreboardOpen] = useState(false);
   const [isGameOverOpen, setIsGameOverOpen] = useState(false);
@@ -102,6 +125,10 @@ export default function App() {
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('duelRoom')) {
       setMode('1v1');
+    }
+    if (urlParams.get('addFriend')) {
+      setProfileInitialTab('friends');
+      setIsProfileOpen(true);
     }
   }, []);
 
@@ -186,6 +213,11 @@ export default function App() {
 
     const correctCount = finalResults.filter((r) => r.isCorrect).length;
 
+    // Check active boosts
+    const isDoubleTrophies = isBoostActive('double_trophies');
+    const isDoubleExp = isBoostActive('double_exp');
+    const isDoubleTokens = isBoostActive('double_tokens');
+
     // Award career points & check achievements
     const { updatedAccount, newUnlocks } = evaluateAchievements(account, {
       isCorrect: correctCount > 0,
@@ -194,10 +226,22 @@ export default function App() {
       pointsScored: finalScore,
     });
 
+    const roundTrophies = Math.round(finalScore / 10) * (isDoubleTrophies ? 2 : 1);
+    const roundExp = (correctCount * 15 + Math.round(finalScore / 25)) * (isDoubleExp ? 2 : 1);
+    const roundTokens = (finalScore > 0 ? Math.round(finalScore / 20) : 0) * (isDoubleTokens ? 2 : 1);
+
     updatedAccount.totalGames += 1;
     if (correctCount >= 7) updatedAccount.totalWins += 1;
     updatedAccount.totalScore += finalScore;
-    updatedAccount.trophyPoints += Math.round(finalScore / 10);
+    updatedAccount.trophyPoints += roundTrophies;
+    updatedAccount.battleTokens = (updatedAccount.battleTokens || 0) + roundTokens;
+
+    // Level progression strictly based on EXP
+    const expResult = addExpToAccount(updatedAccount, roundExp);
+    if (expResult.leveledUp) {
+      sound.playTrophyUnlock();
+      triggerConfetti();
+    }
 
     if (finalScore > 0) {
       if (!updatedAccount.highScores) updatedAccount.highScores = {};
@@ -251,12 +295,20 @@ export default function App() {
     let newMultiplier = multiplier;
     let newLives = lives;
 
+    // Check active buffs
+    const isDoubleTrophies = isBoostActive('double_trophies');
+    const isDoubleExp = isBoostActive('double_exp');
+    const isDoubleTokens = isBoostActive('double_tokens');
+    const hasMegaScore = isBoostActive('mega_score');
+    const hasStreakShield = isBoostActive('streak_shield');
+
     if (isCorrect) {
       newStreak = streak + 1;
       const scoreCalc = calculateScore(timeLeft, maxTime, newStreak, mode);
-      // Hard mode bonus multiplier
+      // Hard mode bonus multiplier & Mega Score buff
       const difficultyBonus = difficulty === 'hard' ? 1.5 : difficulty === 'medium' ? 1.25 : 1.0;
-      points = Math.round(scoreCalc.points * difficultyBonus);
+      const megaMultiplier = hasMegaScore ? 1.5 : 1.0;
+      points = Math.round(scoreCalc.points * difficultyBonus * megaMultiplier);
       newMultiplier = scoreCalc.multiplier;
 
       setStreak(newStreak);
@@ -275,10 +327,17 @@ export default function App() {
         setTimeLeft(blitzTimeLeftRef.current);
       }
     } else {
-      newStreak = 0;
-      newMultiplier = 1;
-      setStreak(0);
-      setMultiplier(1);
+      if (hasStreakShield && streak > 0) {
+        // Streak Shield buff preserves the streak!
+        newStreak = streak;
+        newMultiplier = multiplier;
+        setStreak(streak);
+      } else {
+        newStreak = 0;
+        newMultiplier = 1;
+        setStreak(0);
+        setMultiplier(1);
+      }
       setLastPointsEarned(0);
 
       if (mode === 'survival') {
@@ -315,11 +374,31 @@ export default function App() {
 
     if (isCorrect) {
       updatedAccount.totalCorrect += 1;
-      updatedAccount.trophyPoints += Math.round(points / 10);
+      const questionTrophies = Math.round(points / 10) * (isDoubleTrophies ? 2 : 1);
+      const questionExp = 25 * (isDoubleExp ? 2 : 1);
+      const questionTokens = 5 * (isDoubleTokens ? 2 : 1);
+
+      updatedAccount.trophyPoints += questionTrophies;
+      updatedAccount.battleTokens = (updatedAccount.battleTokens || 0) + questionTokens;
+
+      // EXP leveling integration
+      const expRes = addExpToAccount(updatedAccount, questionExp);
+      if (expRes.leveledUp) {
+        sound.playTrophyUnlock();
+        triggerConfetti();
+      }
     }
     updatedAccount.totalGuesses += 1;
-    saveActiveAccount(updatedAccount);
-    setAccount({ ...updatedAccount });
+    const withMissions = recordDailyMissionEvent(updatedAccount, {
+      gamePlayed: true,
+      isCorrect,
+      pokemonTypes: currentQuestion.pokemon.types,
+      timeRemaining: timeLeft,
+      streak: newStreak,
+      scoreEarned: points,
+    });
+    saveActiveAccount(withMissions);
+    setAccount({ ...withMissions });
 
     if (newUnlocks.length > 0) {
       sound.playTrophyUnlock();
@@ -417,7 +496,9 @@ export default function App() {
     sound.playButtonPress();
     sound.playStreakBonus();
     setStartedModes((prev) => ({ ...prev, [targetMode]: true }));
-    handleResetGame();
+    if (targetMode === 'classic' || targetMode === 'legendary' || targetMode === 'blitz') {
+      handleResetGame();
+    }
   }, [handleResetGame]);
 
   // Mode Change Handler: always reset started states so silhouette & legendary require pressing Start when returned to
@@ -551,13 +632,52 @@ export default function App() {
     setScore((prev) => prev + points);
     setAccount((prevAccount) => {
       const updated = { ...prevAccount };
-      updated.trophyPoints += Math.round(points / 10);
+      const isDoubleTrophies = isBoostActive('double_trophies');
+      const isDoubleExp = isBoostActive('double_exp');
+      const isDoubleTokens = isBoostActive('double_tokens');
+
+      const earnedTrophies = Math.round(points / 10) * (isDoubleTrophies ? 2 : 1);
+      const earnedTokens = 10 * (isDoubleTokens ? 2 : 1);
+      const earnedExp = 30 * (isDoubleExp ? 2 : 1);
+
+      updated.trophyPoints += earnedTrophies;
+      updated.battleTokens = (updated.battleTokens || 0) + earnedTokens;
       updated.totalScore += points;
       if (isPerfect) updated.totalCorrect += 1;
-      saveActiveAccount(updated);
-      return updated;
+
+      const expRes = addExpToAccount(updated, earnedExp);
+      if (expRes.leveledUp) {
+        sound.playTrophyUnlock();
+        triggerConfetti();
+      }
+
+      const withMissions = recordDailyMissionEvent(updated, {
+        gamePlayed: true,
+        isCorrect: isPerfect,
+        scoreEarned: points,
+      });
+
+      saveActiveAccount(withMissions);
+      return withMissions;
     });
   };
+
+  // Battle Finished Handler (1v1 PvP, Records FIFO 25 battles & Daily Missions)
+  const handleBattleFinished = useCallback((battle: Omit<BattleRecord, 'id' | 'timestamp'>) => {
+    setAccount((prev) => {
+      const { updatedAccount, newUnlocks } = addBattleToHistory(prev, battle);
+      const withMissions = recordDailyMissionEvent(updatedAccount, {
+        battleCompleted: true,
+        scoreEarned: battle.playerScore,
+      });
+      saveActiveAccount(withMissions);
+      if (newUnlocks && newUnlocks.length > 0) {
+        sound.playTrophyUnlock();
+        triggerConfetti();
+      }
+      return withMissions;
+    });
+  }, []);
 
   // Change BGM Track
   const handleSelectSong = (songId: string) => {
@@ -600,7 +720,20 @@ export default function App() {
         account={account}
         isMuted={isMuted}
         onToggleMute={handleToggleMute}
-        onOpenProfile={() => setIsProfileOpen(true)}
+        onOpenProfile={() => {
+          setProfileInitialTab('profile');
+          setIsProfileOpen(true);
+        }}
+        onOpenTrophyRoad={() => {
+          setTrophyModalView('trophy_road');
+          setIsTrophyModalOpen(true);
+        }}
+        onOpenShop={() => {
+          setIsPokeMartOpen(true);
+        }}
+        onOpenDailyMissions={() => {
+          setIsDailyMissionsOpen(true);
+        }}
         onOpenJukebox={() => setIsJukeboxOpen(true)}
         onOpenScoreboard={() => setIsScoreboardOpen(true)}
         onChangeMode={handleModeChange}
@@ -608,7 +741,7 @@ export default function App() {
       />
 
       {/* Main Container */}
-      <main className="w-full max-w-4xl px-3 sm:px-6 py-4 flex-1 flex flex-col items-center justify-between">
+      <main className="w-full max-w-7xl px-3 sm:px-6 py-4 flex-1 flex flex-col items-center justify-between">
         {/* Mode Selector */}
         <ModeSelector
           mode={mode}
@@ -631,118 +764,156 @@ export default function App() {
         {/* 1. SILHOUETTE, LEGENDARY ARENA & BLITZ MODES */}
         {isSilhouetteMode && (
           (mode === 'classic' || mode === 'legendary' || mode === 'blitz') && !startedModes[mode] ? (
-            <div className="w-full max-w-xl mx-auto flex flex-col items-center my-auto py-4">
-              <div className="w-full bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center relative overflow-hidden">
-                {/* Glow backdrop */}
-                <div
-                  className={`absolute -top-24 -right-24 w-60 h-60 rounded-full blur-3xl pointer-events-none ${
-                    mode === 'legendary' ? 'bg-amber-500/10' : mode === 'blitz' ? 'bg-yellow-500/15' : 'bg-rose-500/10'
-                  }`}
+            <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-6 items-start my-auto py-4">
+              {/* Left Column: Trophy Road & Shop (Poké Mart) */}
+              <div className="lg:col-span-3 flex flex-col gap-4 order-2 lg:order-1 w-full">
+                <TrophyRoadPanel
+                  account={account}
+                  onOpenTrophyRoad={() => {
+                    setTrophyModalView('trophy_road');
+                    setIsTrophyModalOpen(true);
+                  }}
                 />
-                <div
-                  className={`absolute -bottom-24 -left-24 w-60 h-60 rounded-full blur-3xl pointer-events-none ${
-                    mode === 'legendary' ? 'bg-purple-500/10' : mode === 'blitz' ? 'bg-orange-500/15' : 'bg-cyan-500/10'
-                  }`}
+                <ShopPanel
+                  account={account}
+                  onAccountUpdated={(acc) => setAccount({ ...acc })}
+                  onOpenFullShop={() => {
+                    setIsPokeMartOpen(true);
+                  }}
                 />
+              </div>
 
-                <div
-                  className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-xl relative z-10 ${
-                    mode === 'legendary'
-                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40 shadow-amber-950/60'
-                      : mode === 'blitz'
-                      ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/40 shadow-yellow-950/60'
-                      : 'bg-rose-500/20 text-rose-400 border border-rose-500/40 shadow-rose-950/60'
-                  }`}
-                >
-                  {mode === 'legendary' ? (
-                    <Crown className="w-8 h-8" />
-                  ) : mode === 'blitz' ? (
-                    <Zap className="w-8 h-8 fill-yellow-400" />
-                  ) : (
-                    <Target className="w-8 h-8" />
-                  )}
-                </div>
+              {/* Center Column: Start Game Arena */}
+              <div className="lg:col-span-6 flex flex-col items-center order-1 lg:order-2 w-full">
+                <div className="w-full bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center relative overflow-hidden">
+                  {/* Glow backdrop */}
+                  <div
+                    className={`absolute -top-24 -right-24 w-60 h-60 rounded-full blur-3xl pointer-events-none ${
+                      mode === 'legendary' ? 'bg-amber-500/10' : mode === 'blitz' ? 'bg-yellow-500/15' : 'bg-rose-500/10'
+                    }`}
+                  />
+                  <div
+                    className={`absolute -bottom-24 -left-24 w-60 h-60 rounded-full blur-3xl pointer-events-none ${
+                      mode === 'legendary' ? 'bg-purple-500/10' : mode === 'blitz' ? 'bg-orange-500/15' : 'bg-cyan-500/10'
+                    }`}
+                  />
 
-                <span
-                  className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-2 relative z-10 ${
-                    mode === 'legendary'
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      : mode === 'blitz'
-                      ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30'
-                      : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                  }`}
-                >
-                  {mode === 'legendary'
-                    ? 'Rare Encounters • 2x Trophy Boost'
-                    : mode === 'blitz'
-                    ? '60-Second Challenge • Non-Stop Clock'
-                    : 'Unlimited Rounds • Endless Streak'}
-                </span>
-
-                <h3 className="text-2xl sm:text-3xl font-black font-display text-white mb-2 relative z-10">
-                  {mode === 'legendary'
-                    ? 'Legendary & Mythical Arena'
-                    : mode === 'blitz'
-                    ? 'Blitz Speed Run (60s)'
-                    : "Who's That Pokémon?"}
-                </h3>
-
-                <p className="text-xs sm:text-sm text-slate-300 max-w-md mb-6 leading-relaxed relative z-10">
-                  {mode === 'legendary'
-                    ? 'Face off exclusively against Legendary, Mythical, and Ultra Beast Pokémon from across all 9 generations. Test your knowledge against the rarest silhouettes in the franchise!'
-                    : mode === 'blitz'
-                    ? 'Can you identify Pokémon at hyper-speed? You have 60 continuous seconds to answer as many Pokémon as possible without stopping. Speed and accuracy build record high scores!'
-                    : 'Can you recognize Pokémon exclusively from their mystery shadow? Answer before the 15-second timer runs out to build multiplier streaks and earn limitless trophies!'}
-                </p>
-
-                {/* Feature Chips */}
-                <div className="grid grid-cols-3 gap-2 w-full max-w-sm mb-6 relative z-10">
-                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-center">
-                    <Clock className="w-4 h-4 mx-auto text-amber-400 mb-1" />
-                    <span className="text-[11px] font-bold text-slate-300 block">
-                      {mode === 'blitz' ? '60 Seconds' : '15 Seconds'}
-                    </span>
-                    <span className="text-[9px] text-slate-500">
-                      {mode === 'blitz' ? 'Total Clock' : 'Per Shadow'}
-                    </span>
+                  <div
+                    className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-xl relative z-10 ${
+                      mode === 'legendary'
+                        ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40 shadow-amber-950/60'
+                        : mode === 'blitz'
+                        ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/40 shadow-yellow-950/60'
+                        : 'bg-rose-500/20 text-rose-400 border border-rose-500/40 shadow-rose-950/60'
+                    }`}
+                  >
+                    {mode === 'legendary' ? (
+                      <Crown className="w-8 h-8" />
+                    ) : mode === 'blitz' ? (
+                      <Zap className="w-8 h-8 fill-yellow-400" />
+                    ) : (
+                      <Target className="w-8 h-8" />
+                    )}
                   </div>
-                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-center">
-                    <Flame className="w-4 h-4 mx-auto text-rose-400 mb-1" />
-                    <span className="text-[11px] font-bold text-slate-300 block">Streak Multiplier</span>
-                    <span className="text-[9px] text-slate-500">Up to 3.0x</span>
-                  </div>
-                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-center">
-                    <Sparkles className="w-4 h-4 mx-auto text-cyan-400 mb-1" />
-                    <span className="text-[11px] font-bold text-slate-300 block">
-                      {mode === 'legendary' ? 'Legendary Only' : 'Gen 1 - 9'}
-                    </span>
-                    <span className="text-[9px] text-slate-500">
-                      {mode === 'legendary' ? 'Rare Titans' : mode === 'blitz' ? 'Rapid Fire Queue' : '+ Regional Forms'}
-                    </span>
-                  </div>
-                </div>
 
-                <button
-                  id={mode === 'legendary' ? 'btn-start-legendary-game' : mode === 'blitz' ? 'btn-start-blitz-game' : 'btn-start-silhouette-game'}
-                  type="button"
-                  onClick={() => handleStartMode(mode)}
-                  className={`py-3.5 px-8 rounded-2xl text-white font-display font-black text-sm uppercase tracking-wider shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2.5 cursor-pointer relative z-10 ${
-                    mode === 'legendary'
-                      ? 'bg-gradient-to-r from-amber-500 via-yellow-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 shadow-amber-950/60'
-                      : mode === 'blitz'
-                      ? 'bg-gradient-to-r from-yellow-500 via-amber-500 to-orange-600 hover:from-yellow-400 hover:to-orange-500 shadow-yellow-950/60'
-                      : 'bg-gradient-to-r from-rose-500 via-red-500 to-pink-600 hover:from-rose-400 hover:to-pink-500 shadow-rose-950/60'
-                  }`}
-                >
-                  <Play className="w-4 h-4 fill-white" />
-                  <span>
+                  <span
+                    className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-2 relative z-10 ${
+                      mode === 'legendary'
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                        : mode === 'blitz'
+                        ? 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30'
+                        : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                    }`}
+                  >
                     {mode === 'legendary'
-                      ? 'Enter Legendary Arena'
+                      ? 'Rare Encounters • 2x Trophy Boost'
                       : mode === 'blitz'
-                      ? 'Start 60s Blitz Run'
-                      : 'Start Silhouette Challenge'}
+                      ? '60-Second Challenge • Non-Stop Clock'
+                      : 'Unlimited Rounds • Endless Streak'}
                   </span>
-                </button>
+
+                  <h3 className="text-2xl sm:text-3xl font-black font-display text-white mb-2 relative z-10">
+                    {mode === 'legendary'
+                      ? 'Legendary & Mythical Arena'
+                      : mode === 'blitz'
+                      ? 'Blitz Speed Run (60s)'
+                      : "Who's That Pokémon?"}
+                  </h3>
+
+                  <p className="text-xs sm:text-sm text-slate-300 max-w-md mb-6 leading-relaxed relative z-10">
+                    {mode === 'legendary'
+                      ? 'Face off exclusively against Legendary, Mythical, and Ultra Beast Pokémon from across all 9 generations. Test your knowledge against the rarest silhouettes in the franchise!'
+                      : mode === 'blitz'
+                      ? 'Can you identify Pokémon at hyper-speed? You have 60 continuous seconds to answer as many Pokémon as possible without stopping. Speed and accuracy build record high scores!'
+                      : 'Can you recognize Pokémon exclusively from their mystery shadow? Answer before the 15-second timer runs out to build multiplier streaks and earn limitless trophies!'}
+                  </p>
+
+                  {/* Feature Chips */}
+                  <div className="grid grid-cols-3 gap-2 w-full max-w-sm mb-6 relative z-10">
+                    <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-center">
+                      <Clock className="w-4 h-4 mx-auto text-amber-400 mb-1" />
+                      <span className="text-[11px] font-bold text-slate-300 block">
+                        {mode === 'blitz' ? '60 Seconds' : '15 Seconds'}
+                      </span>
+                      <span className="text-[9px] text-slate-500">
+                        {mode === 'blitz' ? 'Total Clock' : 'Per Shadow'}
+                      </span>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-center">
+                      <Flame className="w-4 h-4 mx-auto text-rose-400 mb-1" />
+                      <span className="text-[11px] font-bold text-slate-300 block">Streak Multiplier</span>
+                      <span className="text-[9px] text-slate-500">Up to 3.0x</span>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-center">
+                      <Sparkles className="w-4 h-4 mx-auto text-cyan-400 mb-1" />
+                      <span className="text-[11px] font-bold text-slate-300 block">
+                        {mode === 'legendary' ? 'Legendary Only' : 'Gen 1 - 9'}
+                      </span>
+                      <span className="text-[9px] text-slate-500">
+                        {mode === 'legendary' ? 'Rare Titans' : mode === 'blitz' ? 'Rapid Fire Queue' : '+ Regional Forms'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    id={mode === 'legendary' ? 'btn-start-legendary-game' : mode === 'blitz' ? 'btn-start-blitz-game' : 'btn-start-silhouette-game'}
+                    type="button"
+                    onClick={() => handleStartMode(mode)}
+                    className={`py-3.5 px-8 rounded-2xl text-white font-display font-black text-sm uppercase tracking-wider shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2.5 cursor-pointer relative z-10 ${
+                      mode === 'legendary'
+                        ? 'bg-gradient-to-r from-amber-500 via-yellow-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 shadow-amber-950/60'
+                        : mode === 'blitz'
+                        ? 'bg-gradient-to-r from-yellow-500 via-amber-500 to-orange-600 hover:from-yellow-400 hover:to-orange-500 shadow-yellow-950/60'
+                        : 'bg-gradient-to-r from-rose-500 via-red-500 to-pink-600 hover:from-rose-400 hover:to-pink-500 shadow-rose-950/60'
+                    }`}
+                  >
+                    <Play className="w-4 h-4 fill-white" />
+                    <span>
+                      {mode === 'legendary'
+                        ? 'Enter Legendary Arena'
+                        : mode === 'blitz'
+                        ? 'Start 60s Blitz Run'
+                        : 'Start Silhouette Challenge'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Right Column: Gym Badges & Achievements */}
+              <div className="lg:col-span-3 flex flex-col gap-4 order-3 w-full">
+                <BadgesPanel
+                  account={account}
+                  onOpenBadgesModal={(reg) => {
+                    setGymBadgesRegion(reg || 'All');
+                    setIsGymBadgesOpen(true);
+                  }}
+                />
+                <AchievementsPanel
+                  account={account}
+                  onOpenAchievementsModal={() => {
+                    setIsAchievementsOpen(true);
+                  }}
+                />
               </div>
             </div>
           ) : (
@@ -898,7 +1069,7 @@ export default function App() {
           <div className="w-full my-auto py-2">
             <Duel1v1Game
               currentTrainerName={account.displayName}
-              initialRoomCode={new URLSearchParams(window.location.search).get('duelRoom')}
+              initialRoomCode={activeDuelRoomCode || new URLSearchParams(window.location.search).get('duelRoom')}
               onTokensEarned={handleTokensEarned}
               onScoreEarned={(pts) => {
                 handleSubGameScore(pts, true);
@@ -912,6 +1083,7 @@ export default function App() {
                   return updatedAccount;
                 });
               }}
+              onBattleFinished={handleBattleFinished}
               onAdvanceMilestone={() => {}}
             />
           </div>
@@ -919,23 +1091,133 @@ export default function App() {
 
         {/* 8. BATTLE PREDICTOR (WHO WILL WIN?) */}
         {mode === 'battle' && (
-          <div className="w-full my-auto py-2">
-            <BattlePredictorGame
-              difficulty={difficulty}
-              onScoreEarned={handleSubGameScore}
-              onAdvanceMilestone={() => {
-                setAccount((prevAccount) => {
-                  const { updatedAccount, newUnlocks } = evaluateAchievements(prevAccount, { is1v1Win: true });
-                  saveActiveAccount(updatedAccount);
-                  if (newUnlocks.length > 0) {
-                    sound.playTrophyUnlock();
-                    triggerConfetti();
-                  }
-                  return updatedAccount;
-                });
-              }}
-            />
-          </div>
+          !startedModes['battle'] ? (
+            <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-6 items-start my-auto py-4">
+              {/* Left Column: Trophy Road & Shop (Poké Mart) */}
+              <div className="lg:col-span-3 flex flex-col gap-4 order-2 lg:order-1 w-full">
+                <TrophyRoadPanel
+                  account={account}
+                  onOpenTrophyRoad={() => {
+                    setTrophyModalView('trophy_road');
+                    setIsTrophyModalOpen(true);
+                  }}
+                />
+                <ShopPanel
+                  account={account}
+                  onAccountUpdated={(acc) => setAccount({ ...acc })}
+                  onOpenFullShop={() => {
+                    setIsPokeMartOpen(true);
+                  }}
+                />
+              </div>
+
+              {/* Center Column: Start Game Arena */}
+              <div className="lg:col-span-6 flex flex-col items-center order-1 lg:order-2 w-full">
+                <div className="w-full bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center relative overflow-hidden">
+                  {/* Glow backdrop */}
+                  <div className="absolute -top-24 -right-24 w-60 h-60 rounded-full blur-3xl pointer-events-none bg-red-500/15" />
+                  <div className="absolute -bottom-24 -left-24 w-60 h-60 rounded-full blur-3xl pointer-events-none bg-amber-500/15" />
+
+                  <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-xl relative z-10 bg-gradient-to-br from-red-500/20 to-amber-500/20 text-red-400 border border-red-500/40 shadow-red-950/60">
+                    <Swords className="w-8 h-8" />
+                  </div>
+
+                  <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-2 relative z-10 bg-red-500/20 text-red-300 border border-red-500/30">
+                    1v1 Matchup Duel • Type Advantage Engine
+                  </span>
+
+                  <h3 className="text-2xl sm:text-3xl font-black font-display text-white mb-2 relative z-10">
+                    Predict Winner: Who Will Win?
+                  </h3>
+
+                  <p className="text-xs sm:text-sm text-slate-300 max-w-md mb-6 leading-relaxed relative z-10">
+                    Two Pokémon clash in an authentic battle simulation! Analyze base stats, typing matchups, STAB moves, and speed tiers to predict which Pokémon emerges victorious before time runs out.
+                  </p>
+
+                  {/* Feature Chips */}
+                  <div className="grid grid-cols-3 gap-2 w-full max-w-sm mb-6 relative z-10">
+                    <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-center">
+                      <Clock className="w-4 h-4 mx-auto text-amber-400 mb-1" />
+                      <span className="text-[11px] font-bold text-slate-300 block">
+                        20 Seconds
+                      </span>
+                      <span className="text-[9px] text-slate-500">Decision Clock</span>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-center">
+                      <Flame className="w-4 h-4 mx-auto text-rose-400 mb-1" />
+                      <span className="text-[11px] font-bold text-slate-300 block">Win Streak</span>
+                      <span className="text-[9px] text-slate-500">+ Speed Bonus</span>
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 text-center">
+                      <Swords className="w-4 h-4 mx-auto text-cyan-400 mb-1" />
+                      <span className="text-[11px] font-bold text-slate-300 block">Battle Stats</span>
+                      <span className="text-[9px] text-slate-500">Type Multipliers</span>
+                    </div>
+                  </div>
+
+                  <button
+                    id="btn-start-battle-game"
+                    type="button"
+                    onClick={() => handleStartMode('battle')}
+                    className="py-3.5 px-8 rounded-2xl text-white font-display font-black text-sm uppercase tracking-wider shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2.5 cursor-pointer relative z-10 bg-gradient-to-r from-red-600 via-rose-600 to-amber-600 hover:from-red-500 hover:to-amber-500 shadow-red-950/60"
+                  >
+                    <Play className="w-4 h-4 fill-white" />
+                    <span>Start Predict Winner Match</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Right Column: Gym Badges & Achievements */}
+              <div className="lg:col-span-3 flex flex-col gap-4 order-3 w-full">
+                <BadgesPanel
+                  account={account}
+                  onOpenBadgesModal={(reg) => {
+                    setGymBadgesRegion(reg || 'All');
+                    setIsGymBadgesOpen(true);
+                  }}
+                />
+                <AchievementsPanel
+                  account={account}
+                  onOpenAchievementsModal={() => {
+                    setIsAchievementsOpen(true);
+                  }}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="w-full my-auto py-2 flex flex-col items-center">
+              <div className="w-full max-w-4xl flex items-center justify-between px-2 mb-2">
+                <button
+                  id="btn-return-to-battle-start"
+                  type="button"
+                  onClick={() => {
+                    sound.playButtonPress();
+                    setStartedModes((prev) => ({ ...prev, battle: false }));
+                  }}
+                  className="text-xs text-slate-400 hover:text-red-400 font-semibold flex items-center gap-1 transition-colors px-2 py-1 rounded-lg hover:bg-slate-900 border border-transparent hover:border-slate-800 cursor-pointer"
+                >
+                  ← Exit to Start Screen
+                </button>
+                <span className="text-[11px] text-slate-500 font-mono">
+                  Predict Winner • Battle Simulator
+                </span>
+              </div>
+              <BattlePredictorGame
+                onScoreEarned={handleSubGameScore}
+                onAdvanceMilestone={() => {
+                  setAccount((prevAccount) => {
+                    const { updatedAccount, newUnlocks } = evaluateAchievements(prevAccount, { is1v1Win: true });
+                    saveActiveAccount(updatedAccount);
+                    if (newUnlocks.length > 0) {
+                      sound.playTrophyUnlock();
+                      triggerConfetti();
+                    }
+                    return updatedAccount;
+                  });
+                }}
+              />
+            </div>
+          )
         )}
 
         {/* Footer */}
@@ -948,13 +1230,81 @@ export default function App() {
         </footer>
       </main>
 
-      {/* Trainer Profile, Accounts, Unlocked Avatars & Achievements Modal */}
+      {/* 100 Lakh Trophy Road, Vault & Training Bounties Modal */}
+      <TrophyRoomModal
+        isOpen={isTrophyModalOpen}
+        onClose={() => setIsTrophyModalOpen(false)}
+        trophies={INITIAL_TROPHIES.map((t) => {
+          const userRecord = account.trophies?.[t.id];
+          return {
+            ...t,
+            unlocked: userRecord?.unlocked ?? t.unlocked,
+            progress: userRecord?.progress ?? t.progress,
+            unlockedAt: userRecord?.unlockedAt,
+          };
+        })}
+        initialView={trophyModalView}
+        currentTrophyPoints={account.trophyPoints}
+      />
+
+      {/* Independent Poké Mart Modal */}
+      <PokeMartModal
+        isOpen={isPokeMartOpen}
+        onClose={() => setIsPokeMartOpen(false)}
+        account={account}
+        onAccountUpdated={(acc) => setAccount({ ...acc })}
+      />
+
+      {/* Daily Missions Modal (Resets every 24h IST) */}
+      <DailyMissionsModal
+        isOpen={isDailyMissionsOpen}
+        onClose={() => setIsDailyMissionsOpen(false)}
+        account={account}
+        onAccountUpdated={(acc) => setAccount({ ...acc })}
+      />
+
+      {/* Independent Gym Badges Modal */}
+      <GymBadgesModal
+        isOpen={isGymBadgesOpen}
+        onClose={() => setIsGymBadgesOpen(false)}
+        account={account}
+        initialRegion={gymBadgesRegion}
+      />
+
+      {/* Independent Achievements Modal */}
+      <AchievementsModal
+        isOpen={isAchievementsOpen}
+        onClose={() => setIsAchievementsOpen(false)}
+        account={account}
+        onAccountUpdated={(acc) => setAccount({ ...acc })}
+      />
+
+      {/* Trainer Profile, Accounts & Trainer Avatars Modal */}
       <ProfileModal
         isOpen={isProfileOpen}
         onClose={() => setIsProfileOpen(false)}
         account={account}
         onAccountUpdated={(acc) => setAccount({ ...acc })}
         onLogout={handleLogout}
+        initialTab={profileInitialTab}
+        onOpenShop={() => {
+          setIsProfileOpen(false);
+          setIsPokeMartOpen(true);
+        }}
+        onOpenBadges={(reg) => {
+          setGymBadgesRegion(reg || 'All');
+          setIsProfileOpen(false);
+          setIsGymBadgesOpen(true);
+        }}
+        onOpenAchievements={() => {
+          setIsProfileOpen(false);
+          setIsAchievementsOpen(true);
+        }}
+        onStartDuelWithFriend={(friendName, roomCode) => {
+          setIsProfileOpen(false);
+          setActiveDuelRoomCode(roomCode || null);
+          setMode('1v1');
+        }}
       />
 
       {/* Chiptune Jukebox & BGM Track Selector Modal */}

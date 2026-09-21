@@ -1,6 +1,6 @@
 import React from 'react';
 import { GameDifficulty } from '../types/pokemon';
-import { Shield, Scissors, Target, Skull } from 'lucide-react';
+import { Shield, Scissors, Target, Skull, Flame } from 'lucide-react';
 import { sound } from '../utils/audio';
 
 interface DifficultySelectorProps {
@@ -15,10 +15,11 @@ export const DifficultySelector: React.FC<DifficultySelectorProps> = ({
   allowedDifficulties,
 }) => {
   const allLevels: { id: GameDifficulty; label: string; desc: string; icon: React.ComponentType<{ className?: string }> }[] = [
-    { id: 'easy', label: 'Easy', desc: 'Full Silhouette', icon: Shield },
-    { id: 'medium', label: 'Medium', desc: 'Half Body Slice', icon: Scissors },
-    { id: 'hard', label: 'Hard', desc: 'Body Part & Regional Forms', icon: Target },
-    { id: 'extreme', label: 'Extreme', desc: 'Minimal Clues & Manual Typing', icon: Skull },
+    { id: 'easy', label: 'Easy', desc: 'Full Silhouette (15s)', icon: Shield },
+    { id: 'medium', label: 'Medium', desc: 'Half Body Slice (15s)', icon: Scissors },
+    { id: 'hard', label: 'Hard', desc: 'Body Part Target & Regional Forms (15s)', icon: Target },
+    { id: 'extreme', label: 'Extreme', desc: 'Classified Clues & 4 Options (30s)', icon: Skull },
+    { id: 'menacing', label: 'Menacing', desc: 'Classified Clues & Manual Typing (30s)', icon: Flame },
   ];
 
   const levels = allowedDifficulties
@@ -31,7 +32,7 @@ export const DifficultySelector: React.FC<DifficultySelectorProps> = ({
         Difficulty:
       </span>
 
-      <div className={`grid ${levels.length === 4 ? 'grid-cols-4' : 'grid-cols-3'} gap-1.5 flex-1 sm:flex-initial`}>
+      <div className={`grid ${levels.length >= 5 ? 'grid-cols-5' : levels.length === 4 ? 'grid-cols-4' : 'grid-cols-3'} gap-1 sm:gap-1.5 flex-1 sm:flex-initial`}>
         {levels.map((lvl) => {
           const Icon = lvl.icon;
           const isActive = difficulty === lvl.id;
@@ -40,6 +41,7 @@ export const DifficultySelector: React.FC<DifficultySelectorProps> = ({
           if (lvl.id === 'medium') activeClasses = 'bg-amber-500/20 text-amber-300 border-amber-500/40';
           if (lvl.id === 'hard') activeClasses = 'bg-rose-500/20 text-rose-300 border-rose-500/40';
           if (lvl.id === 'extreme') activeClasses = 'bg-purple-500/25 text-purple-300 border-purple-500/50 shadow-purple-950/60';
+          if (lvl.id === 'menacing') activeClasses = 'bg-red-500/25 text-red-300 border-red-500/50 shadow-red-950/60';
 
           return (
             <button
@@ -49,7 +51,7 @@ export const DifficultySelector: React.FC<DifficultySelectorProps> = ({
                 sound.playButtonPress();
                 onChangeDifficulty(lvl.id);
               }}
-              className={`flex items-center justify-center gap-1 sm:gap-1.5 py-1.5 px-2 sm:px-3 rounded-lg text-xs font-semibold border transition-all ${
+              className={`flex items-center justify-center gap-1 py-1.5 px-1.5 sm:px-2.5 rounded-lg text-[11px] sm:text-xs font-semibold border transition-all ${
                 isActive
                   ? `${activeClasses} font-bold shadow-md`
                   : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
@@ -57,7 +59,7 @@ export const DifficultySelector: React.FC<DifficultySelectorProps> = ({
               title={lvl.desc}
             >
               <Icon className="w-3.5 h-3.5 shrink-0" />
-              <span>{lvl.label}</span>
+              <span className="truncate">{lvl.label}</span>
             </button>
           );
         })}
@@ -65,3 +67,4 @@ export const DifficultySelector: React.FC<DifficultySelectorProps> = ({
     </div>
   );
 };
+

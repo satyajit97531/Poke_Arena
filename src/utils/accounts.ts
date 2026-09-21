@@ -1,6 +1,7 @@
 import { ACHIEVEMENTS_LIST } from '../data/achievements';
 import { POKEMON_TRACKS } from '../data/songs';
-import { TrainerAccount } from '../types/pokemon';
+import { TrainerAccount, BattleRecord } from '../types/pokemon';
+import { calculateLevelFromExp, getRankTitleForLevel } from './expSystem';
 
 const STORAGE_ACCOUNTS_KEY = 'poke_quiz_accounts_v2';
 const STORAGE_ACTIVE_ID_KEY = 'poke_quiz_active_account_id_v2';
@@ -91,9 +92,17 @@ export function getActiveAccount(): TrainerAccount {
   // Ensure newer fields are initialized
   if (typeof current.dailyStreak !== 'number') current.dailyStreak = 1;
   if (typeof current.battleTokens !== 'number') current.battleTokens = 250;
+  if (typeof current.exp !== 'number') current.exp = 0;
   if (!current.inventory) current.inventory = {};
   if (!current.claimedDailyStreakDays) current.claimedDailyStreakDays = [];
   if (!current.unlockedTrainerAvatars) current.unlockedTrainerAvatars = ['red'];
+
+  // Recalculate level purely based on EXP
+  const expCalc = calculateLevelFromExp(current.exp || 0);
+  current.level = expCalc.level;
+  if (!current.title || current.title === 'Rookie Pokémon Trainer') {
+    current.title = expCalc.rankTitle;
+  }
 
   return current;
 }
@@ -162,6 +171,9 @@ export function evaluateAchievements(
     difficulty?: string;
     friendAdded?: boolean;
     is1v1Win?: boolean;
+    battlePredicted?: boolean;
+    dailyCompleted?: boolean;
+    dailyClaimed?: boolean;
   }
 ): { updatedAccount: TrainerAccount; newUnlocks: string[] } {
   const acc = { ...account };
@@ -179,19 +191,67 @@ export function evaluateAchievements(
     } else if (ach.id === 'flame_master' && params.pokemonTypes?.includes('fire') && params.isCorrect) {
       record.progress = (record.progress || 0) + 1;
       if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'water_sovereign' && params.pokemonTypes?.includes('water') && params.isCorrect) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'grass_guardian' && params.pokemonTypes?.includes('grass') && params.isCorrect) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'electric_dynamo' && params.pokemonTypes?.includes('electric') && params.isCorrect) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'psychic_oracle' && params.pokemonTypes?.includes('psychic') && params.isCorrect) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'dragon_tamer' && params.pokemonTypes?.includes('dragon') && params.isCorrect) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'ghost_whisperer' && params.pokemonTypes?.includes('ghost') && params.isCorrect) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'steel_colossus' && params.pokemonTypes?.includes('steel') && params.isCorrect) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'ice_monarch' && params.pokemonTypes?.includes('ice') && params.isCorrect) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'fighting_champion' && params.pokemonTypes?.includes('fighting') && params.isCorrect) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'fairy_enchanter' && params.pokemonTypes?.includes('fairy') && params.isCorrect) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
     } else if (ach.id === 'aura_awakening' && (params.streak || 0) >= ach.maxProgress) {
       record.progress = params.streak || 0;
       shouldUnlock = true;
+    } else if (ach.id === 'streak_decade' && (params.streak || 0) >= 10) {
+      record.progress = Math.max(record.progress || 0, params.streak || 0);
+      shouldUnlock = true;
+    } else if (ach.id === 'streak_zenith' && (params.streak || 0) >= 15) {
+      record.progress = Math.max(record.progress || 0, params.streak || 0);
+      shouldUnlock = true;
     } else if (ach.id === 'speed_reflexes' && (params.timeRemaining || 0) >= 13.5 && params.isCorrect) {
+      record.progress = 1;
+      shouldUnlock = true;
+    } else if (ach.id === 'sub_second_sniper' && (params.timeRemaining || 0) >= 14.0 && params.isCorrect) {
       record.progress = 1;
       shouldUnlock = true;
     } else if (ach.id === 'evolution_scholar' && params.evolutionOrganized) {
       record.progress = (record.progress || 0) + 1;
       if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'evolution_mastermind' && params.evolutionOrganized) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
     } else if (ach.id === 'cry_auditor' && params.cryGuessed) {
       record.progress = (record.progress || 0) + 1;
       if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'soundwave_maestro' && params.cryGuessed) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
     } else if (ach.id === 'move_master' && params.moveGuessed) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'attack_analyst_elite' && params.moveGuessed) {
       record.progress = (record.progress || 0) + 1;
       if (record.progress >= ach.maxProgress) shouldUnlock = true;
     } else if (ach.id === 'legendary_conqueror' && params.gameMode === 'legendary' && (params.pointsScored || 0) >= 2500) {
@@ -203,8 +263,59 @@ export function evaluateAchievements(
     } else if (ach.id === 'blitz_champion' && (params.gameMode === 'blitz' || (params.pointsScored || 0) >= 1000)) {
       record.progress = Math.max(record.progress || 0, params.pointsScored || 0);
       if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'speed_demon_blitz' && (params.gameMode === 'blitz' || (params.pointsScored || 0) >= 1500)) {
+      record.progress = Math.max(record.progress || 0, params.pointsScored || 0);
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'hall_of_fame_legend' && (params.pointsScored || 0) >= 5000) {
+      record.progress = params.pointsScored || 0;
+      shouldUnlock = true;
     } else if (ach.id === 'trainer_fellowship' && params.friendAdded) {
       record.progress = 1;
+      shouldUnlock = true;
+    } else if (ach.id === 'battle_predictor_ace' && params.battlePredicted) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'battle_predictor_oracle' && params.battlePredicted) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'daily_devotee' && (params.dailyCompleted || params.dailyClaimed)) {
+      record.progress = 1;
+      shouldUnlock = true;
+    } else if (ach.id === 'daily_mastery' && params.dailyClaimed) {
+      record.progress = (record.progress || 0) + 1;
+      if (record.progress >= ach.maxProgress) shouldUnlock = true;
+    } else if (ach.id === 'battle_history_veteran' && (acc.battleHistory?.length || 0) >= 10) {
+      record.progress = acc.battleHistory?.length || 0;
+      shouldUnlock = true;
+    } else if (ach.id === 'century_trainer' && (acc.totalCorrect || 0) >= 100) {
+      record.progress = acc.totalCorrect || 0;
+      shouldUnlock = true;
+    } else if (ach.id === 'grandmaster_guesses' && (acc.totalCorrect || 0) >= 250) {
+      record.progress = acc.totalCorrect || 0;
+      shouldUnlock = true;
+    } else if (ach.id === 'ten_victories' && (acc.totalWins || 0) >= 10) {
+      record.progress = acc.totalWins || 0;
+      shouldUnlock = true;
+    } else if (ach.id === 'twenty_five_victories' && (acc.totalWins || 0) >= 25) {
+      record.progress = acc.totalWins || 0;
+      shouldUnlock = true;
+    } else if (ach.id === 'level_five_milestone' && (acc.level || 1) >= 5) {
+      record.progress = acc.level || 1;
+      shouldUnlock = true;
+    } else if (ach.id === 'level_ten_milestone' && (acc.level || 1) >= 10) {
+      record.progress = acc.level || 1;
+      shouldUnlock = true;
+    } else if (ach.id === 'level_twenty_milestone' && (acc.level || 1) >= 20) {
+      record.progress = acc.level || 1;
+      shouldUnlock = true;
+    } else if (ach.id === 'trophy_hoarder' && (acc.trophyPoints || 0) >= 5000) {
+      record.progress = acc.trophyPoints || 0;
+      shouldUnlock = true;
+    } else if (ach.id === 'trophy_tycoon' && (acc.trophyPoints || 0) >= 10000) {
+      record.progress = acc.trophyPoints || 0;
+      shouldUnlock = true;
+    } else if (ach.id === 'grand_creator' && (acc.trophyPoints || 0) >= 3000) {
+      record.progress = acc.trophyPoints || 0;
       shouldUnlock = true;
     } else if (ach.id === 'badge_boulder' && (params.streak || 0) >= 3) {
       record.progress = Math.max(record.progress || 0, params.streak || 0);
@@ -239,10 +350,65 @@ export function evaluateAchievements(
 
       // Award Trophy Points
       acc.trophyPoints += ach.rewardTrophyPoints;
+      // Award Trainer EXP for unlocking achievements
+      acc.exp = (acc.exp || 0) + Math.max(50, ach.rewardTrophyPoints * 2);
 
       // Award Avatar reward
       if (ach.rewardAvatarId && !acc.unlockedAvatars.includes(ach.rewardAvatarId)) {
         acc.unlockedAvatars.push(ach.rewardAvatarId);
+      }
+
+      // Award Trainer Avatar rewards from Gym Badges and Achievements
+      if (!acc.unlockedTrainerAvatars) acc.unlockedTrainerAvatars = ['red', 'pikachu'];
+      const BADGE_TO_TRAINER_MAP: Record<string, string> = {
+        badge_boulder: 'brock',
+        badge_cascade: 'misty',
+        badge_thunder: 'ltsurge',
+        badge_rainbow: 'erika',
+        badge_soul: 'koga',
+        badge_marsh: 'sabrina',
+        badge_volcano: 'blaine',
+        badge_earth: 'giovanni',
+        badge_zephyr: 'falkner',
+        badge_hive: 'bugsy',
+        badge_plain: 'whitney',
+        badge_fog: 'morty',
+        badge_storm: 'chuck',
+        badge_mineral: 'jasmine',
+        badge_glacier: 'pryce',
+        badge_rising: 'clair',
+        badge_stone: 'roxanne',
+        badge_knuckle: 'brawly',
+        badge_dynamo: 'wattson',
+        badge_heat: 'flannery',
+        badge_balance: 'norman',
+        badge_feather: 'winona',
+        badge_mind: 'tate',
+        badge_rain: 'wallace',
+        badge_coal: 'roark',
+        badge_forest: 'gardenia',
+        badge_cobble: 'maylene',
+        badge_fen: 'crasherwake',
+        badge_relic: 'fantina',
+        badge_mine: 'byron',
+        badge_icicle: 'candice',
+        badge_beacon: 'volkner',
+        badge_trio: 'cilan',
+        badge_basic: 'lenora',
+        badge_insect: 'burgh',
+        badge_bolt: 'elesa',
+        badge_quake: 'clay',
+        badge_jet: 'skyla',
+        badge_freeze: 'brycen',
+        badge_legend: 'drayden',
+        badge_rumble: 'korrina',
+        badge_voltage: 'clemont',
+        badge_fairy: 'valerie',
+      };
+
+      const leaderId = BADGE_TO_TRAINER_MAP[ach.id];
+      if (leaderId && !acc.unlockedTrainerAvatars.includes(leaderId)) {
+        acc.unlockedTrainerAvatars.push(leaderId);
       }
 
       // Award Song reward
@@ -254,7 +420,31 @@ export function evaluateAchievements(
     acc.achievements[ach.id] = record;
   });
 
-  const { level, rankTitle } = calculateLevelFromPoints(acc.trophyPoints);
+  // Trophy Road Milestone Free Avatars Auto-Unlock Check
+  const unlockedTrainers = acc.unlockedTrainerAvatars || ['red', 'pikachu'];
+  acc.unlockedTrainerAvatars = unlockedTrainers;
+  const TROPHY_ROAD_FREE_AVATARS: [number, string][] = [
+    [1000, 'erika'],
+    [2500, 'lance'],
+    [5000, 'jasmine'],
+    [7500, 'flannery'],
+    [10000, 'dawn'],
+    [15000, 'elesa'],
+    [20000, 'korrina'],
+    [25000, 'iris'],
+    [30000, 'diantha'],
+    [50000, 'blue'],
+    [75000, 'cynthia'],
+    [100000, 'ash'],
+  ];
+
+  TROPHY_ROAD_FREE_AVATARS.forEach(([reqTP, trainerId]) => {
+    if (acc.trophyPoints >= reqTP && !unlockedTrainers.includes(trainerId)) {
+      unlockedTrainers.push(trainerId);
+    }
+  });
+
+  const { level, rankTitle } = calculateLevelFromExp(acc.exp || 0);
   acc.level = level;
   if (!acc.title || acc.title === 'Rookie Pokémon Trainer') {
     acc.title = rankTitle;
@@ -262,4 +452,34 @@ export function evaluateAchievements(
 
   saveActiveAccount(acc);
   return { updatedAccount: acc, newUnlocks };
+}
+
+// Add a battle to the trainer's battle history (maximum 25 entries; FIFO)
+export function addBattleToHistory(
+  account: TrainerAccount,
+  battle: Omit<BattleRecord, 'id' | 'timestamp'>
+): { updatedAccount: TrainerAccount; newUnlocks: string[] } {
+  const newRecord: BattleRecord = {
+    id: `battle_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    timestamp: new Date().toISOString(),
+    ...battle,
+  };
+
+  const existing = account.battleHistory || [];
+  // Keep up to 25. After the 26th battle, the first/oldest battle is removed from history (FIFO)
+  const updatedHistory = [newRecord, ...existing].slice(0, 25);
+
+  const accWithBattle: TrainerAccount = {
+    ...account,
+    battleHistory: updatedHistory,
+    totalGames: (account.totalGames || 0) + 1,
+    totalWins: battle.result === 'victory' ? (account.totalWins || 0) + 1 : (account.totalWins || 0),
+    battleTokens: (account.battleTokens || 0) + (battle.rewardTokens || 0),
+    trophyPoints: (account.trophyPoints || 0) + (battle.rewardTP || 0),
+  };
+
+  return evaluateAchievements(accWithBattle, {
+    is1v1Win: battle.result === 'victory',
+    pointsScored: battle.playerScore,
+  });
 }

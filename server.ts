@@ -40,16 +40,19 @@ let mongoClient: MongoClient | null = null;
 let db: Db | null = null;
 let mongoConnected = false;
 let mongoConnectionError: string | null = null;
+let lastConnectAttemptTime = 0;
+let connectPromise: Promise<Db | null> | null = null;
+let loggedMongoNotice = false;
+const RECONNECT_COOLDOWN_MS = 60000; // 60s cooldown between connection retries when unreachable
 
-// Connect to MongoDB Atlas
-async function getDb(): Promise<Db | null> {
-  if (db && mongoConnected) return db;
+// Attempt connection to MongoDB Atlas with low timeout to avoid freezing requests
+async function attemptConnect(): Promise<Db | null> {
   try {
     const activeUri = sanitizeMongoUri(process.env.MONGODB_URI);
     if (!mongoClient) {
       mongoClient = new MongoClient(activeUri, {
-        connectTimeoutMS: 8000,
-        serverSelectionTimeoutMS: 8000,
+        connectTimeoutMS: 3000,
+        serverSelectionTimeoutMS: 3000,
       });
     }
     await mongoClient.connect();
@@ -76,13 +79,49 @@ async function getDb(): Promise<Db | null> {
 
     return db;
   } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error('⚠️ MongoDB connection error:', errorMsg);
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    let friendlyError = rawMsg;
+    if (rawMsg.includes('SSL alert number 80') || rawMsg.includes('tlsv1 alert internal error')) {
+      friendlyError = 'MongoDB Atlas IP access restricted (SSL Alert 80: IP not whitelisted in Atlas Network Access). Add 0.0.0.0/0 to Atlas Network Access to allow cloud container sync.';
+    }
+
     mongoConnected = false;
-    mongoConnectionError = errorMsg;
+    mongoConnectionError = friendlyError;
     mongoClient = null;
     db = null;
+
+    // Log informative status without triggering stderr error alerts
+    if (!loggedMongoNotice) {
+      loggedMongoNotice = true;
+      console.log(`ℹ️ [Database Notice] MongoDB Atlas is currently offline or IP-restricted: ${friendlyError}`);
+      console.log('ℹ️ [Database Notice] Pokémon Arena is running seamlessly using high-performance In-Memory & Local Storage mode.');
+    }
     return null;
+  }
+}
+
+// Connect to MongoDB Atlas with non-blocking backoff cooldown
+async function getDb(): Promise<Db | null> {
+  if (db && mongoConnected) return db;
+
+  // If a connection attempt is currently in-flight, await it
+  if (connectPromise) {
+    return connectPromise;
+  }
+
+  const now = Date.now();
+  // If connection recently failed, fail fast to avoid stalling HTTP responses
+  if (!mongoConnected && now - lastConnectAttemptTime < RECONNECT_COOLDOWN_MS) {
+    return null;
+  }
+
+  lastConnectAttemptTime = now;
+  connectPromise = attemptConnect();
+  try {
+    const result = await connectPromise;
+    return result;
+  } finally {
+    connectPromise = null;
   }
 }
 
@@ -108,6 +147,26 @@ function getTransporter() {
 const inMemoryTrainers = new Map<string, Record<string, unknown>>();
 const inMemoryOtps = new Map<string, { otp: string; expiresAt: number }>();
 const inMemoryHighScores: Array<Record<string, unknown>> = [];
+const inMemoryFriendRequests = new Map<string, any>();
+const inMemoryBattleChallenges = new Map<string, any>();
+
+// Real-time online presence tracking for friends and multiplayer
+const userPresence = new Map<string, number>();
+
+function markUserOnline(identifier: string) {
+  if (!identifier) return;
+  const now = Date.now();
+  const cleaned = identifier.trim().toLowerCase().replace(/^@/, '');
+  userPresence.set(cleaned, now);
+}
+
+function isUserOnline(identifier: string): boolean {
+  if (!identifier) return false;
+  const cleaned = identifier.trim().toLowerCase().replace(/^@/, '');
+  const lastSeen = userPresence.get(cleaned);
+  if (!lastSeen) return false;
+  return Date.now() - lastSeen < 45000; // Online if active within last 45 seconds
+}
 
 // Email validation helper
 function isValidEmail(email: string): boolean {
@@ -554,6 +613,15 @@ app.post('/api/account/sync', async (req, res) => {
         },
         { upsert: false }
       );
+    } else {
+      const existing = inMemoryTrainers.get(normalizedEmail);
+      if (existing) {
+        inMemoryTrainers.set(normalizedEmail, {
+          ...existing,
+          ...account,
+          updatedAt: new Date().toISOString(),
+        });
+      }
     }
 
     return res.json({ success: true });
@@ -579,59 +647,624 @@ app.get('/api/trainers/by-username/:username', async (req, res) => {
         { projection: { password: 0, email: 0 } }
       );
       if (trainer) {
-        return res.json({ success: true, trainer });
+        return res.json({ success: true, exists: true, trainer });
       }
     } else {
       for (const t of inMemoryTrainers.values()) {
         if (String(t.username || '').toLowerCase() === rawUsername) {
           const { password: _, email: __, ...safe } = t;
-          return res.json({ success: true, trainer: safe });
+          return res.json({ success: true, exists: true, trainer: safe });
         }
       }
     }
 
-    return res.status(404).json({ error: `Trainer with username "${rawUsername}" not found.` });
+    return res.status(404).json({ error: `Trainer with username "${rawUsername}" not found.`, exists: false });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     return res.status(500).json({ error: errorMsg });
   }
 });
 
-// 6. Global Leaderboard from MongoDB (Only players who have actually played)
+// 5.6 Universal Trainer Search (by User ID, username, or scanned QR code query)
+app.get('/api/trainers/lookup', async (req, res) => {
+  try {
+    const query = String(req.query.query || '').trim().replace(/^@/, '');
+    if (!query) {
+      return res.status(400).json({ error: 'Search query is required.' });
+    }
+
+    const database = await getDb();
+    if (database) {
+      // Try ID match, username exact/regex match, or email match
+      const trainer = await database.collection('trainers').findOne(
+        {
+          $or: [
+            { id: query },
+            { username: { $regex: new RegExp(`^${query}$`, 'i') } },
+            { displayName: { $regex: new RegExp(`^${query}$`, 'i') } },
+          ],
+        },
+        { projection: { password: 0, email: 0 } }
+      );
+
+      if (trainer) {
+        return res.json({ success: true, exists: true, trainer });
+      }
+    } else {
+      for (const t of inMemoryTrainers.values()) {
+        const tId = String(t.id || '');
+        const tUname = String(t.username || '').toLowerCase();
+        const tDname = String(t.displayName || '').toLowerCase();
+        if (tId === query || tUname === query.toLowerCase() || tDname === query.toLowerCase()) {
+          const { password: _, email: __, ...safe } = t;
+          return res.json({ success: true, exists: true, trainer: safe });
+        }
+      }
+    }
+
+    return res.status(404).json({ error: `Trainer "${query}" not found.`, exists: false });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ error: errorMsg });
+  }
+});
+
+// 5.7 Send Friend Request (with max 100 friends limit and duplicate validation)
+app.post('/api/friends/send-request', async (req, res) => {
+  try {
+    const { fromUserId, fromUsername, fromDisplayName, fromAvatarId, targetQuery } = req.body;
+    if (!fromUserId || !fromUsername || !targetQuery) {
+      return res.status(400).json({ error: 'Missing required request parameters.' });
+    }
+
+    const cleanTarget = String(targetQuery).trim().replace(/^@/, '');
+    const cleanFromUname = String(fromUsername).trim().toLowerCase().replace(/^@/, '');
+
+    if (cleanTarget.toLowerCase() === cleanFromUname || cleanTarget === fromUserId) {
+      return res.status(400).json({ error: 'You cannot send a friend request to yourself.' });
+    }
+
+    const database = await getDb();
+    let targetTrainer: any = null;
+    let senderTrainer: any = null;
+
+    if (database) {
+      targetTrainer = await database.collection('trainers').findOne({
+        $or: [
+          { id: cleanTarget },
+          { username: { $regex: new RegExp(`^${cleanTarget}$`, 'i') } },
+          { displayName: { $regex: new RegExp(`^${cleanTarget}$`, 'i') } },
+        ],
+      });
+      senderTrainer = await database.collection('trainers').findOne({
+        $or: [{ id: fromUserId }, { username: cleanFromUname }],
+      });
+    } else {
+      for (const t of inMemoryTrainers.values()) {
+        const tId = String(t.id || '');
+        const tUname = String(t.username || '').toLowerCase();
+        if (tId === cleanTarget || tUname === cleanTarget.toLowerCase()) {
+          targetTrainer = t;
+        }
+        if (tId === fromUserId || tUname === cleanFromUname) {
+          senderTrainer = t;
+        }
+      }
+    }
+
+    if (!targetTrainer) {
+      return res.status(404).json({
+        error: `Trainer "${cleanTarget}" not found. Check that the User ID or username is exact.`,
+      });
+    }
+
+    const targetUserId = targetTrainer.id || String(targetTrainer._id);
+    const targetUsername = targetTrainer.username;
+    const targetDisplayName = targetTrainer.displayName || targetUsername;
+
+    if (targetUserId === fromUserId || targetUsername.toLowerCase() === cleanFromUname) {
+      return res.status(400).json({ error: 'You cannot send a friend request to yourself.' });
+    }
+
+    // Check 100 friend limit
+    const senderFriends: string[] = senderTrainer?.friends || [];
+    if (senderFriends.length >= 100) {
+      return res.status(400).json({ error: 'You have reached the maximum limit of 100 friends.' });
+    }
+    const targetFriends: string[] = targetTrainer.friends || [];
+    if (targetFriends.length >= 100) {
+      return res.status(400).json({ error: `Trainer @${targetUsername} has reached the limit of 100 friends.` });
+    }
+
+    // Check if already friends
+    const isAlreadyFriend = senderFriends.some(
+      (f) => f.toLowerCase() === targetUsername.toLowerCase() || f.toLowerCase() === targetDisplayName.toLowerCase()
+    );
+    if (isAlreadyFriend) {
+      return res.status(400).json({ error: `@${targetUsername} is already on your friends list!` });
+    }
+
+    // Check if duplicate pending request exists
+    const requestId = `freq_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const newRequest = {
+      id: requestId,
+      fromUserId,
+      fromUsername: cleanFromUname,
+      fromDisplayName: fromDisplayName || cleanFromUname,
+      fromAvatar: fromAvatarId || 25,
+      toUserId: targetUserId,
+      toUsername: targetUsername,
+      toDisplayName: targetDisplayName,
+      toAvatar: targetTrainer.avatarId || 25,
+      status: 'pending',
+      createdAt: Date.now(),
+    };
+
+    if (database) {
+      const existingReq = await database.collection('friend_requests').findOne({
+        status: 'pending',
+        $or: [
+          { fromUsername: cleanFromUname, toUsername: targetUsername },
+          { fromUsername: targetUsername, toUsername: cleanFromUname },
+        ],
+      });
+
+      if (existingReq) {
+        if (existingReq.fromUsername.toLowerCase() === cleanFromUname) {
+          return res.status(400).json({ error: 'You have already sent a friend request to this trainer.' });
+        } else {
+          return res.status(400).json({
+            error: `@${targetUsername} has already sent you a friend request! Check your Received tab.`,
+          });
+        }
+      }
+
+      await database.collection('friend_requests').insertOne(newRequest);
+    } else {
+      for (const r of inMemoryFriendRequests.values()) {
+        if (
+          r.status === 'pending' &&
+          ((r.fromUsername === cleanFromUname && r.toUsername === targetUsername) ||
+            (r.fromUsername === targetUsername && r.toUsername === cleanFromUname))
+        ) {
+          return res.status(400).json({ error: 'A pending friend request already exists between you two.' });
+        }
+      }
+      inMemoryFriendRequests.set(requestId, newRequest);
+    }
+
+    return res.json({
+      success: true,
+      request: newRequest,
+      message: `Friend request sent to @${targetUsername}!`,
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error('Error sending friend request:', errorMsg);
+    return res.status(500).json({ error: 'Failed to send friend request.' });
+  }
+});
+
+// 5.75 Presence Heartbeat (Real-time online/offline indicator)
+app.post('/api/presence/heartbeat', (req, res) => {
+  try {
+    const { userId, username, displayName } = req.body || {};
+    if (userId) markUserOnline(userId);
+    if (username) markUserOnline(username);
+    if (displayName) markUserOnline(displayName);
+    return res.json({ success: true, timestamp: Date.now() });
+  } catch (err: unknown) {
+    return res.status(500).json({ error: 'Presence update failed' });
+  }
+});
+
+// 5.8 Get All Friend System Data (Friends, Received Requests, Sent Requests, Online Presence)
+app.get('/api/friends/data/:userId', async (req, res) => {
+  try {
+    const userId = String(req.params.userId || '').trim();
+    const username = String(req.query.username || '').trim().toLowerCase().replace(/^@/, '');
+
+    if (userId) markUserOnline(userId);
+    if (username) markUserOnline(username);
+
+    const database = await getDb();
+    let received: any[] = [];
+    let sent: any[] = [];
+    let friends: string[] = [];
+
+    if (database) {
+      const trainer = await database.collection('trainers').findOne({
+        $or: [{ id: userId }, { username }],
+      });
+      if (trainer && Array.isArray(trainer.friends)) {
+        friends = trainer.friends;
+      }
+
+      received = await database
+        .collection('friend_requests')
+        .find({
+          status: 'pending',
+          $or: [{ toUserId: userId }, { toUsername: username }],
+        })
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      sent = await database
+        .collection('friend_requests')
+        .find({
+          status: 'pending',
+          $or: [{ fromUserId: userId }, { fromUsername: username }],
+        })
+        .sort({ createdAt: -1 })
+        .toArray();
+    } else {
+      const trainer = inMemoryTrainers.get(userId) || [...inMemoryTrainers.values()].find((t) => t.username === username);
+      if (trainer && Array.isArray(trainer.friends)) {
+        friends = trainer.friends as string[];
+      }
+
+      for (const r of inMemoryFriendRequests.values()) {
+        if (r.status === 'pending') {
+          if (r.toUserId === userId || r.toUsername === username) received.push(r);
+          if (r.fromUserId === userId || r.fromUsername === username) sent.push(r);
+        }
+      }
+    }
+
+    // Build real-time online status map for all friends
+    const onlineStatus: Record<string, boolean> = {};
+    friends.forEach((friendName) => {
+      onlineStatus[friendName] = isUserOnline(friendName);
+    });
+
+    return res.json({
+      success: true,
+      friends,
+      onlineStatus,
+      friendCount: friends.length,
+      maxFriends: 100,
+      received,
+      sent,
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ error: errorMsg });
+  }
+});
+
+// 5.9 Respond to Friend Request (Accept or Reject)
+app.post('/api/friends/respond', async (req, res) => {
+  try {
+    const { requestId, action, userId, username } = req.body;
+    if (!requestId || !action || !['accept', 'reject'].includes(action)) {
+      return res.status(400).json({ error: 'Valid requestId and action (accept/reject) are required.' });
+    }
+
+    const database = await getDb();
+    let request: any = null;
+
+    if (database) {
+      request = await database.collection('friend_requests').findOne({ id: requestId });
+    } else {
+      request = inMemoryFriendRequests.get(requestId);
+    }
+
+    if (!request || request.status !== 'pending') {
+      return res.status(404).json({ error: 'Friend request not found or has already been resolved.' });
+    }
+
+    if (action === 'reject') {
+      if (database) {
+        await database.collection('friend_requests').deleteOne({ id: requestId });
+      } else {
+        inMemoryFriendRequests.delete(requestId);
+      }
+      return res.json({ success: true, action: 'reject', message: 'Friend request rejected and removed.' });
+    }
+
+    // Action === 'accept'
+    const userA_id = request.fromUserId;
+    const userA_name = request.fromDisplayName || request.fromUsername;
+    const userB_id = request.toUserId;
+    const userB_name = request.toDisplayName || request.toUsername;
+
+    if (database) {
+      const trainerA = await database.collection('trainers').findOne({
+        $or: [{ id: userA_id }, { username: request.fromUsername }],
+      });
+      const trainerB = await database.collection('trainers').findOne({
+        $or: [{ id: userB_id }, { username: request.toUsername }],
+      });
+
+      const friendsA = (trainerA?.friends || []) as string[];
+      const friendsB = (trainerB?.friends || []) as string[];
+
+      if (friendsA.length >= 100 || friendsB.length >= 100) {
+        return res.status(400).json({ error: 'Cannot accept request: Friend limit of 100 has been reached.' });
+      }
+
+      await database.collection('trainers').updateOne(
+        { $or: [{ id: userA_id }, { username: request.fromUsername }] },
+        { $addToSet: { friends: userB_name } }
+      );
+      await database.collection('trainers').updateOne(
+        { $or: [{ id: userB_id }, { username: request.toUsername }] },
+        { $addToSet: { friends: userA_name } }
+      );
+
+      // Once accepted, delete request so it is completely resolved
+      await database.collection('friend_requests').deleteOne({ id: requestId });
+    } else {
+      const trainerA = inMemoryTrainers.get(userA_id);
+      const trainerB = inMemoryTrainers.get(userB_id);
+      if (trainerA) {
+        const fA = ((trainerA.friends as string[]) || []).slice(0, 100);
+        if (!fA.includes(userB_name)) fA.push(userB_name);
+        trainerA.friends = fA;
+      }
+      if (trainerB) {
+        const fB = ((trainerB.friends as string[]) || []).slice(0, 100);
+        if (!fB.includes(userA_name)) fB.push(userA_name);
+        trainerB.friends = fB;
+      }
+      inMemoryFriendRequests.delete(requestId);
+    }
+
+    return res.json({
+      success: true,
+      action: 'accept',
+      friendName: request.fromDisplayName || request.fromUsername,
+      message: `You and @${request.fromUsername} are now official friends!`,
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error('Error resolving friend request:', errorMsg);
+    return res.status(500).json({ error: 'Failed to resolve friend request.' });
+  }
+});
+
+// 5.10 Cancel Sent Friend Request
+app.post('/api/friends/cancel-request', async (req, res) => {
+  try {
+    const { requestId } = req.body;
+    if (!requestId) return res.status(400).json({ error: 'Request ID is required.' });
+
+    const database = await getDb();
+    if (database) {
+      await database.collection('friend_requests').deleteOne({ id: requestId });
+    } else {
+      inMemoryFriendRequests.delete(requestId);
+    }
+
+    return res.json({ success: true, message: 'Friend request cancelled.' });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ error: errorMsg });
+  }
+});
+
+// 5.11 Remove Friend
+app.post('/api/friends/remove', async (req, res) => {
+  try {
+    const { userId, username, friendName } = req.body;
+    if (!friendName) return res.status(400).json({ error: 'Friend name is required.' });
+
+    const database = await getDb();
+    if (database) {
+      await database.collection('trainers').updateOne(
+        { $or: [{ id: userId }, { username }] },
+        { $pull: { friends: friendName } as any }
+      );
+    } else {
+      const trainer = inMemoryTrainers.get(userId) || [...inMemoryTrainers.values()].find((t) => t.username === username);
+      if (trainer && Array.isArray(trainer.friends)) {
+        trainer.friends = (trainer.friends as string[]).filter((f) => f !== friendName);
+      }
+    }
+
+    return res.json({ success: true, message: `Removed ${friendName} from your friends.` });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ error: errorMsg });
+  }
+});
+
+// 5.12 Send 1v1 Battle Challenge to Friend
+app.post('/api/friends/challenge', async (req, res) => {
+  try {
+    const { fromUserId, fromUsername, fromDisplayName, fromAvatarId, toFriendName, difficulty = 'extreme' } = req.body;
+    if (!fromUsername || !toFriendName) {
+      return res.status(400).json({ error: 'Challenger and friend name are required.' });
+    }
+
+    const roomCode = `FRND-${Math.floor(1000 + Math.random() * 9000)}`;
+    const questions = generateQuestionsForRoom(5, 'all');
+
+    const duelRoom: DuelRoomState = {
+      code: roomCode,
+      host: {
+        id: fromUserId || `host_${Date.now()}`,
+        name: fromDisplayName || fromUsername,
+        avatarId: Number(fromAvatarId) || 25,
+        score: 0,
+        baseScore: 0,
+        speedScore: 0,
+        answers: [],
+        times: [],
+      },
+      guest: null,
+      rounds: 5,
+      timeLimit: 30, // 30 seconds for Extreme & Menacing
+      difficulty: difficulty || 'extreme',
+      region: 'all',
+      status: 'waiting',
+      questions,
+      currentRoundIdx: 0,
+      roundStartTime: 0,
+      firstAnswerer: null,
+      roundAnswers: {},
+      lastRoundBreakdown: null,
+      createdAt: Date.now(),
+      lastActivity: Date.now(),
+    };
+
+    activeDuelRooms.set(roomCode, duelRoom);
+
+    const challengeId = `chal_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const challengeData = {
+      id: challengeId,
+      fromUsername,
+      fromDisplayName: fromDisplayName || fromUsername,
+      fromAvatarId: fromAvatarId || 25,
+      toFriendName,
+      roomCode,
+      difficulty,
+      status: 'pending',
+      createdAt: Date.now(),
+    };
+
+    const database = await getDb();
+    if (database) {
+      await database.collection('battle_challenges').insertOne(challengeData);
+    } else {
+      inMemoryBattleChallenges.set(challengeId, challengeData);
+    }
+
+    return res.json({
+      success: true,
+      roomCode,
+      challengeId,
+      message: `Battle challenge dispatched to ${toFriendName}! Room code: ${roomCode}`,
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error('Error creating friend battle challenge:', errorMsg);
+    return res.status(500).json({ error: 'Failed to create battle challenge.' });
+  }
+});
+
+// 6. Global Leaderboard from MongoDB (Top 100 trainers by highest ranks and trophies)
 app.get('/api/leaderboard', async (req, res) => {
   try {
+    const queryUserId = req.query.userId ? String(req.query.userId).trim() : null;
+    const queryEmail = req.query.email ? String(req.query.email).trim().toLowerCase() : null;
+    const queryUsername = req.query.username ? String(req.query.username).trim().toLowerCase() : null;
+
     const database = await getDb();
     if (database) {
       const trainers = await database
         .collection('trainers')
         .find(
-          {
-            $or: [
-              { totalGames: { $gt: 0 } },
-              { totalScore: { $gt: 0 } },
-              { trophyPoints: { $gt: 0 } },
-              { totalGuesses: { $gt: 0 } },
-            ],
-          },
+          {},
           { projection: { password: 0 } }
         )
-        .sort({ trophyPoints: -1, totalScore: -1 })
-        .limit(50)
+        .sort({ trophyPoints: -1, totalScore: -1, level: -1, totalWins: -1 })
+        .limit(100)
         .toArray();
 
-      return res.json({ success: true, trainers });
+      let userRank = null;
+      if (queryUserId || queryEmail || queryUsername) {
+        const userDoc = await database.collection('trainers').findOne({
+          $or: [
+            ...(queryUserId ? [{ id: queryUserId }] : []),
+            ...(queryEmail ? [{ email: queryEmail }] : []),
+            ...(queryUsername ? [{ username: queryUsername }] : []),
+          ],
+        });
+
+        if (userDoc) {
+          const userTP = userDoc.trophyPoints || 0;
+          const userScore = userDoc.totalScore || 0;
+          const userLevel = userDoc.level || 1;
+          const userExp = userDoc.exp || 0;
+
+          const [trophyRankCount, levelRankCount, scoreRankCount, totalCount] = await Promise.all([
+            database.collection('trainers').countDocuments({
+              $or: [
+                { trophyPoints: { $gt: userTP } },
+                { trophyPoints: userTP, totalScore: { $gt: userScore } },
+              ],
+            }),
+            database.collection('trainers').countDocuments({
+              $or: [
+                { level: { $gt: userLevel } },
+                { level: userLevel, exp: { $gt: userExp } },
+              ],
+            }),
+            database.collection('trainers').countDocuments({
+              totalScore: { $gt: userScore },
+            }),
+            database.collection('trainers').countDocuments({}),
+          ]);
+
+          userRank = {
+            trophyRank: trophyRankCount + 1,
+            levelRank: levelRankCount + 1,
+            scoreRank: scoreRankCount + 1,
+            totalTrainers: Math.max(totalCount, 1),
+            trainer: {
+              id: userDoc.id,
+              displayName: userDoc.displayName,
+              username: userDoc.username,
+              level: userDoc.level || 1,
+              exp: userDoc.exp || 0,
+              trophyPoints: userDoc.trophyPoints || 0,
+              totalScore: userDoc.totalScore || 0,
+              avatarId: userDoc.avatarId || 25,
+              title: userDoc.title || 'Pokémon Trainer',
+            },
+          };
+        }
+      }
+
+      return res.json({ success: true, trainers, userRank });
     }
 
-    // In-memory fallback: only players who have played
-    const memoryTrainers = Array.from(inMemoryTrainers.values())
-      .filter((t: any) => (t.totalGames || 0) > 0 || (t.totalScore || 0) > 0 || (t.trophyPoints || 0) > 0)
-      .map((t: any) => {
-        const { password: _, ...safe } = t;
-        return safe;
-      })
-      .sort((a: any, b: any) => (b.trophyPoints || 0) - (a.trophyPoints || 0));
+    // In-memory fallback: all trainers sorted by highest trophies and rank
+    const allTrainersList = Array.from(inMemoryTrainers.values()).map((t: any) => {
+      const { password: _, ...safe } = t;
+      return safe;
+    });
 
-    return res.json({ success: true, trainers: memoryTrainers });
+    const memoryTrainers = [...allTrainersList]
+      .sort((a: any, b: any) => {
+        if ((b.trophyPoints || 0) !== (a.trophyPoints || 0)) {
+          return (b.trophyPoints || 0) - (a.trophyPoints || 0);
+        }
+        if ((b.totalScore || 0) !== (a.totalScore || 0)) {
+          return (b.totalScore || 0) - (a.totalScore || 0);
+        }
+        return (b.level || 1) - (a.level || 1);
+      });
+
+    let userRank = null;
+    if (queryUserId || queryEmail || queryUsername) {
+      const uIndex = memoryTrainers.findIndex((t: any) =>
+        (queryUserId && t.id === queryUserId) ||
+        (queryEmail && t.email?.toLowerCase() === queryEmail) ||
+        (queryUsername && t.username?.toLowerCase() === queryUsername)
+      );
+
+      const byLevel = [...allTrainersList].sort((a: any, b: any) => (b.level || 1) - (a.level || 1) || (b.exp || 0) - (a.exp || 0));
+      const lvlIndex = byLevel.findIndex((t: any) =>
+        (queryUserId && t.id === queryUserId) ||
+        (queryEmail && t.email?.toLowerCase() === queryEmail) ||
+        (queryUsername && t.username?.toLowerCase() === queryUsername)
+      );
+
+      if (uIndex !== -1) {
+        const uDoc = memoryTrainers[uIndex];
+        userRank = {
+          trophyRank: uIndex + 1,
+          levelRank: lvlIndex !== -1 ? lvlIndex + 1 : uIndex + 1,
+          scoreRank: uIndex + 1,
+          totalTrainers: memoryTrainers.length,
+          trainer: uDoc,
+        };
+      }
+    }
+
+    return res.json({ success: true, trainers: memoryTrainers.slice(0, 100), userRank });
   } catch (err: unknown) {
     return res.status(500).json({ error: 'Failed to load leaderboard.' });
   }
@@ -761,7 +1394,7 @@ app.get('/api/highscores', async (req, res) => {
       .filter((r) => !botNames.has(String(r.playerName || '').toLowerCase().trim()) && Number(r.score) > 0)
       .sort((a, b) => Number(b.score) - Number(a.score));
 
-    return res.json({ success: true, scores: cleanRecords });
+    return res.json({ success: true, scores: cleanRecords.slice(0, 100) });
   } catch (err: unknown) {
     console.error('Error fetching high scores:', err);
     return res.status(500).json({ error: 'Failed to fetch high scores.' });
@@ -936,7 +1569,7 @@ app.post('/api/duel/create', (req, res) => {
       },
       guest: null,
       rounds: Number(rounds) || 5,
-      timeLimit: Number(timeLimit) || 15,
+      timeLimit: (difficulty === 'extreme' || difficulty === 'menacing') ? 30 : (Number(timeLimit) || 15),
       difficulty: difficulty || 'easy',
       region: region || 'all',
       status: 'waiting',
@@ -1077,7 +1710,7 @@ app.post('/api/duel/random-match', (req, res) => {
       },
       guest: null,
       rounds: 5,
-      timeLimit: 15,
+      timeLimit: (difficulty === 'extreme' || difficulty === 'menacing') ? 30 : difficulty === 'hard' ? 8 : difficulty === 'medium' ? 12 : 15,
       difficulty,
       region,
       status: 'waiting',

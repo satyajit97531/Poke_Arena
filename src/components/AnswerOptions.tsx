@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Check, X, ArrowRight, Keyboard, Search, Skull } from 'lucide-react';
+import { Check, X, ArrowRight, Keyboard, Search, Skull, Flame } from 'lucide-react';
 import { DifficultyMode, GameDifficulty, Pokemon } from '../types/pokemon';
 import { sound } from '../utils/audio';
 
@@ -29,7 +29,9 @@ export const AnswerOptions: React.FC<AnswerOptionsProps> = ({
 }) => {
   const [typedInput, setTypedInput] = useState('');
   const isExtreme = difficulty === 'extreme';
-  const effectiveMode: DifficultyMode = isExtreme ? 'master' : difficultyMode;
+  const isMenacing = difficulty === 'menacing';
+  // User mandate: Extreme has 4 options! Menacing has NO options (manual typing).
+  const effectiveMode: DifficultyMode = isMenacing ? 'master' : isExtreme ? 'options' : difficultyMode;
 
   // Keyboard navigation for options (1, 2, 3, 4) or Enter for next
   useEffect(() => {
@@ -98,64 +100,72 @@ export const AnswerOptions: React.FC<AnswerOptionsProps> = ({
         </motion.button>
       ) : effectiveMode === 'options' ? (
         /* Standard 4 Multiple Choice Grid */
-        <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-          {options.map((opt, index) => {
-            const isSelected = selectedAnswer === opt.name;
-            const isCorrect = isRevealed && opt.id === correctPokemon.id;
-            const isWrongSelected = isRevealed && isSelected && opt.id !== correctPokemon.id;
+        <div className="w-full space-y-2">
+          {isExtreme && (
+            <div className="flex items-center justify-center gap-1.5 py-1 px-3 bg-purple-500/15 border border-purple-500/30 rounded-xl text-purple-300 text-xs font-semibold">
+              <Skull className="w-3.5 h-3.5 text-purple-400" />
+              <span>Extreme Mode: 4 Options Provided (30s Time Limit)</span>
+            </div>
+          )}
+          <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {options.map((opt, index) => {
+              const isSelected = selectedAnswer === opt.name;
+              const isCorrect = isRevealed && opt.id === correctPokemon.id;
+              const isWrongSelected = isRevealed && isSelected && opt.id !== correctPokemon.id;
 
-            return (
-              <motion.button
-                key={opt.id}
-                id={`btn-option-${index + 1}`}
-                whileHover={{ scale: isRevealed ? 1 : 1.02 }}
-                whileTap={{ scale: isRevealed ? 1 : 0.98 }}
-                onClick={() => {
-                  if (!isRevealed) {
-                    onSelectAnswer(opt);
-                  }
-                }}
-                disabled={isRevealed}
-                className={`relative w-full py-3 px-4 rounded-xl border text-left font-display font-semibold transition-all flex items-center justify-between overflow-hidden shadow-sm ${
-                  isCorrect
-                    ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 shadow-emerald-500/30 ring-2 ring-emerald-500'
-                    : isWrongSelected
-                    ? 'bg-rose-500/20 border-rose-500 text-rose-300 shadow-rose-500/30 ring-2 ring-rose-500'
-                    : isSelected
-                    ? 'bg-slate-800 border-slate-600 text-white'
-                    : 'bg-slate-900/90 hover:bg-slate-800/90 border-slate-800 hover:border-slate-700 text-slate-200'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <span className="w-6 h-6 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 text-xs font-mono flex items-center justify-center font-bold">
-                    {index + 1}
-                  </span>
-                  <span className="text-base sm:text-lg tracking-wide capitalize">
-                    {opt.displayName}
-                  </span>
-                </div>
+              return (
+                <motion.button
+                  key={opt.id}
+                  id={`btn-option-${index + 1}`}
+                  whileHover={{ scale: isRevealed ? 1 : 1.02 }}
+                  whileTap={{ scale: isRevealed ? 1 : 0.98 }}
+                  onClick={() => {
+                    if (!isRevealed) {
+                      onSelectAnswer(opt);
+                    }
+                  }}
+                  disabled={isRevealed}
+                  className={`relative w-full py-3 px-4 rounded-xl border text-left font-display font-semibold transition-all flex items-center justify-between overflow-hidden shadow-sm ${
+                    isCorrect
+                      ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 shadow-emerald-500/30 ring-2 ring-emerald-500'
+                      : isWrongSelected
+                      ? 'bg-rose-500/20 border-rose-500 text-rose-300 shadow-rose-500/30 ring-2 ring-rose-500'
+                      : isSelected
+                      ? 'bg-slate-800 border-slate-600 text-white'
+                      : 'bg-slate-900/90 hover:bg-slate-800/90 border-slate-800 hover:border-slate-700 text-slate-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="w-6 h-6 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 text-xs font-mono flex items-center justify-center font-bold">
+                      {index + 1}
+                    </span>
+                    <span className="text-base sm:text-lg tracking-wide capitalize">
+                      {opt.displayName}
+                    </span>
+                  </div>
 
-                {isCorrect && (
-                  <div className="w-6 h-6 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center font-bold">
-                    <Check className="w-4 h-4 stroke-[3]" />
-                  </div>
-                )}
-                {isWrongSelected && (
-                  <div className="w-6 h-6 rounded-full bg-rose-500 text-white flex items-center justify-center font-bold">
-                    <X className="w-4 h-4 stroke-[3]" />
-                  </div>
-                )}
-              </motion.button>
-            );
-          })}
+                  {isCorrect && (
+                    <div className="w-6 h-6 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center font-bold">
+                      <Check className="w-4 h-4 stroke-[3]" />
+                    </div>
+                  )}
+                  {isWrongSelected && (
+                    <div className="w-6 h-6 rounded-full bg-rose-500 text-white flex items-center justify-center font-bold">
+                      <X className="w-4 h-4 stroke-[3]" />
+                    </div>
+                  )}
+                </motion.button>
+              );
+            })}
+          </div>
         </div>
       ) : (
-        /* Hardcore Master Mode / Extreme Manual Typing */
+        /* Hardcore Menacing Mode / Manual Typing */
         <form onSubmit={handleMasterSubmit} className="w-full flex flex-col gap-2">
-          {isExtreme && (
-            <div className="flex items-center justify-center gap-1.5 py-1 px-3 bg-purple-500/15 border border-purple-500/30 rounded-xl text-purple-300 text-xs font-semibold mb-1">
-              <Skull className="w-3.5 h-3.5 text-purple-400" />
-              <span>Extreme Mode: Zero options provided! Type Pokémon name using physical clues</span>
+          {isMenacing && (
+            <div className="flex items-center justify-center gap-1.5 py-1 px-3 bg-red-500/15 border border-red-500/30 rounded-xl text-red-300 text-xs font-semibold mb-1">
+              <Flame className="w-3.5 h-3.5 text-red-400" />
+              <span>Menacing Mode: Zero options provided! Type Pokémon name using physical clues</span>
             </div>
           )}
           <div className="relative w-full">
@@ -164,13 +174,13 @@ export const AnswerOptions: React.FC<AnswerOptionsProps> = ({
               id="input-master-pokemon"
               type="text"
               autoFocus
-              placeholder={isExtreme ? "Type Pokémon name manually (e.g. Charizard, Lucario)..." : "Type Pokémon name (e.g. Tinkaton, Lucario)..."}
+              placeholder={isMenacing ? "Type Pokémon name manually (e.g. Charizard, Lucario)..." : "Type Pokémon name (e.g. Tinkaton, Lucario)..."}
               value={typedInput}
               onChange={(e) => setTypedInput(e.target.value)}
               disabled={isRevealed}
               className={`w-full pl-12 pr-28 py-3.5 rounded-xl bg-slate-900 border text-white placeholder-slate-500 focus:outline-none focus:ring-1 font-display font-medium text-lg ${
-                isExtreme
-                  ? 'border-purple-500/50 focus:border-purple-400 focus:ring-purple-400'
+                isMenacing
+                  ? 'border-red-500/50 focus:border-red-400 focus:ring-red-400'
                   : 'border-slate-700 focus:border-rose-500 focus:ring-rose-500'
               }`}
             />
@@ -178,22 +188,22 @@ export const AnswerOptions: React.FC<AnswerOptionsProps> = ({
               type="submit"
               disabled={!typedInput.trim() || isRevealed}
               className={`absolute right-2 top-1/2 -translate-y-1/2 px-4 py-2 rounded-lg disabled:opacity-40 text-white font-display font-bold text-sm transition-colors ${
-                isExtreme ? 'bg-purple-600 hover:bg-purple-500' : 'bg-rose-500 hover:bg-rose-600'
+                isMenacing ? 'bg-red-600 hover:bg-red-500' : 'bg-rose-500 hover:bg-rose-600'
               }`}
             >
               Guess
             </button>
           </div>
           <p className="text-xs text-slate-400 text-center">
-            {isExtreme
+            {isMenacing
               ? 'Spelling counts! Match the official English name and press Enter.'
               : 'Master Mode: Spelling matters! Type exact English name and hit Enter.'}
           </p>
         </form>
       )}
 
-      {/* Difficulty Mode Switcher (Hidden in Extreme difficulty since Extreme requires manual typing) */}
-      {!isExtreme && (
+      {/* Difficulty Mode Switcher (Hidden in Extreme and Menacing modes to preserve difficulty rules) */}
+      {!isExtreme && !isMenacing && (
         <div className="w-full flex items-center justify-between text-xs text-slate-500 px-1 pt-1">
           <div className="flex items-center gap-1.5 hidden sm:flex">
             <Keyboard className="w-3.5 h-3.5" />

@@ -355,24 +355,26 @@ export const TrophyRoomModal: React.FC<TrophyRoomModalProps> = ({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {TRAINING_BOUNTIES_REWARDS.map((item) => (
+              {TRAINING_BOUNTIES_REWARDS.map((item, idx) => (
                 <div
                   key={item.id}
-                  className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800 hover:border-slate-700 transition-all flex flex-col justify-between"
+                  className={`p-3.5 rounded-xl bg-slate-950/60 border transition-all flex flex-col justify-between ${
+                    item.highlight ? 'border-amber-500/40 bg-amber-500/5' : 'border-slate-800 hover:border-slate-700'
+                  }`}
                 >
                   <div>
                     <div className="flex items-center justify-between gap-2 mb-1.5">
                       <div className="flex items-center gap-2">
                         <span className="w-7 h-7 rounded-lg bg-slate-900 border border-slate-700 flex items-center justify-center text-xs font-mono font-bold text-amber-300">
-                          {item.day}
+                          #{idx + 1}
                         </span>
                         <h4 className="text-xs font-bold font-display text-white">
                           {item.title}
                         </h4>
                       </div>
 
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-slate-900 text-slate-400 border border-slate-800">
-                        Day {item.day}
+                      <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-md bg-slate-900 text-slate-300 border border-slate-800">
+                        {item.category}
                       </span>
                     </div>
 
@@ -388,7 +390,7 @@ export const TrophyRoomModal: React.FC<TrophyRoomModalProps> = ({
                       )}
                     </div>
 
-                    <p className="text-xs text-slate-400 leading-relaxed">{item.description}</p>
+                    <p className="text-xs text-slate-400 leading-relaxed">{item.taskDesc}</p>
                   </div>
                 </div>
               ))}

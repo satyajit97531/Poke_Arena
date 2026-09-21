@@ -1,9 +1,10 @@
 import React from 'react';
-import { Volume2, VolumeX, Trophy, BarChart2, Sparkles, Music, User, Coins, ShoppingBag } from 'lucide-react';
+import { Volume2, VolumeX, Trophy, BarChart2, Sparkles, Music, User, Coins, Zap, Calendar } from 'lucide-react';
 import { MainGameMode, RegionId, TrainerAccount } from '../types/pokemon';
 import { REGIONS } from '../utils/pokemonTypes';
 import { getAccountAvatarUrl } from '../data/trainerAvatars';
 import { sound } from '../utils/audio';
+import { calculateLevelFromExp } from '../utils/expSystem';
 
 interface HeaderProps {
   score?: number;
@@ -17,6 +18,7 @@ interface HeaderProps {
   onOpenProfile: () => void;
   onOpenTrophyRoad?: () => void;
   onOpenShop?: () => void;
+  onOpenDailyMissions?: () => void;
   onOpenJukebox: () => void;
   onOpenScoreboard: () => void;
   onChangeMode: (mode: MainGameMode) => void;
@@ -31,13 +33,18 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleMute,
   onOpenProfile,
   onOpenTrophyRoad,
-  onOpenShop,
+  onOpenDailyMissions,
   onOpenJukebox,
   onOpenScoreboard,
 }) => {
   const currentRegion = REGIONS.find((r) => r.id === region) || REGIONS[0];
   const battleTokens = account.battleTokens ?? 0;
   const avatarUrl = getAccountAvatarUrl(account);
+  const expInfo = calculateLevelFromExp(account.exp || 0);
+
+  const claimableMissions = account.dailyMissions?.missions
+    ? Object.values(account.dailyMissions.missions).filter((m) => m.completed && !m.claimed).length
+    : 0;
 
   return (
     <header className="w-full border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md sticky top-0 z-40 px-3 sm:px-6 py-2.5">
@@ -74,52 +81,81 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
-          {/* Quick Profile Pill on Mobile */}
-          <button
-            onClick={() => {
-              sound.playButtonPress();
-              onOpenProfile();
-            }}
-            className="flex md:hidden items-center gap-1.5 p-1 rounded-full bg-slate-900 border border-slate-800"
-          >
-            <img
-              src={avatarUrl}
-              alt="Trainer Avatar"
-              className="w-7 h-7 rounded-full object-contain bg-slate-950 p-0.5"
-            />
-            <span className="text-xs font-bold font-display text-white pr-2">{account.displayName}</span>
-          </button>
+          {/* Mobile Tokens & EXP Pill */}
+          <div className="flex md:hidden items-center gap-2">
+            <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-[10px] font-mono">
+              <Coins className="w-3 h-3 text-amber-400" />
+              <span className="font-bold text-amber-300">{battleTokens} BT</span>
+              <span className="text-slate-600">|</span>
+              <Zap className="w-3 h-3 text-cyan-400" />
+              <span className="text-cyan-300 font-bold">{expInfo.expToNextLevel} to Lv.{expInfo.level + 1}</span>
+            </div>
+
+            {/* Quick Profile Pill on Mobile */}
+            <button
+              onClick={() => {
+                sound.playButtonPress();
+                onOpenProfile();
+              }}
+              className="flex items-center gap-1.5 p-1 rounded-full bg-slate-900 border border-slate-800"
+            >
+              <img
+                src={avatarUrl}
+                alt="Trainer Avatar"
+                className="w-7 h-7 rounded-full object-contain bg-slate-950 p-0.5"
+              />
+              <span className="text-xs font-bold font-display text-white pr-2">{account.displayName}</span>
+            </button>
+          </div>
         </div>
 
-        {/* Center: Battle Tokens & Direct Poké Mart Quick Launch */}
-        <div className="hidden md:flex items-center gap-3 bg-slate-900/90 border border-slate-800 rounded-full px-4 py-1.5 shadow-inner">
-          {/* Battle Tokens Currency */}
+        {/* Center: Battle Tokens & EXP To Next Level */}
+        <div className="hidden md:flex items-center gap-3.5 bg-slate-900/90 border border-slate-800 rounded-full px-4 py-1.5 shadow-inner">
+          {/* Battle Tokens Display */}
           <div
-            className="flex items-center gap-2 cursor-pointer group"
-            onClick={onOpenShop || onOpenProfile}
-            title="Battle Tokens (Spend in Poké Mart!)"
+            className="flex items-center gap-1.5"
+            title={`Battle Tokens: ${battleTokens.toLocaleString()} BT`}
           >
-            <div className="w-4 h-4 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
-              <Coins className="w-2.5 h-2.5 text-amber-400" />
+            <div className="w-5 h-5 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
+              <Coins className="w-3 h-3 text-amber-400" />
             </div>
             <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Tokens:</span>
-            <span className="text-xs font-bold font-mono text-amber-300 group-hover:text-amber-200 transition-colors">
+            <span className="text-xs font-bold font-mono text-amber-300">
               {battleTokens.toLocaleString()} BT
             </span>
           </div>
 
           <span className="text-slate-700">|</span>
 
-          {/* Quick Poké Mart Shortcut */}
-          <button
-            type="button"
-            onClick={onOpenShop || onOpenProfile}
-            className="flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 font-bold transition-colors cursor-pointer"
-            title="Open Poké Mart"
+          {/* EXP To Next Level Progress */}
+          <div
+            className="flex items-center gap-2 cursor-pointer group"
+            onClick={onOpenProfile}
+            title={`Current EXP: ${expInfo.currentLevelExp} / ${expInfo.expNeededForNextLevel} (${expInfo.expToNextLevel} EXP needed to reach Level ${expInfo.level + 1})`}
           >
-            <ShoppingBag className="w-3.5 h-3.5" />
-            <span>Poké Mart</span>
-          </button>
+            <div className="flex items-center gap-1">
+              <Zap className="w-3.5 h-3.5 text-cyan-400 fill-cyan-400/40" />
+              <span className="text-xs font-black font-mono text-white">
+                Lv.{expInfo.level}
+              </span>
+            </div>
+
+            {/* EXP Bar */}
+            <div className="w-20 lg:w-28 h-2 rounded-full bg-slate-800 border border-slate-700 overflow-hidden relative">
+              <div
+                className="h-full bg-gradient-to-r from-cyan-500 via-teal-400 to-emerald-400 rounded-full transition-all duration-300"
+                style={{ width: `${Math.max(6, expInfo.progressPercent)}%` }}
+              />
+            </div>
+
+            {/* EXP Needed Text */}
+            <div className="text-[11px] font-mono leading-none whitespace-nowrap">
+              <span className="font-bold text-cyan-300 group-hover:text-cyan-200 transition-colors">
+                {expInfo.expToNextLevel} EXP
+              </span>
+              <span className="text-slate-400 text-[10px] ml-1">to Lv.{expInfo.level + 1}</span>
+            </div>
+          </div>
         </div>
 
         {/* Right Tools: Profile Avatar, Limitless Trophies, Jukebox BGM, Leaderboards */}
@@ -132,7 +168,7 @@ export const Header: React.FC<HeaderProps> = ({
               onOpenProfile();
             }}
             className="flex items-center gap-2 py-1 pl-1 pr-2.5 rounded-full bg-slate-900 hover:bg-slate-800 border border-slate-700/80 transition-all hover:scale-105 active:scale-95 text-left group"
-            title="Trainer Profile, Shop & Badges"
+            title="Trainer Profile & Accounts"
           >
             <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-rose-500 to-amber-500 p-0.5 shadow-sm overflow-hidden flex items-center justify-center">
               <img
@@ -184,6 +220,25 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Music className="w-3.5 h-3.5 text-cyan-400" />
             <span className="hidden sm:inline text-[11px]">BGM</span>
+          </button>
+
+          {/* Daily Missions Button (24h IST cycle) */}
+          <button
+            id="header-btn-daily-missions"
+            onClick={() => {
+              sound.playButtonPress();
+              if (onOpenDailyMissions) onOpenDailyMissions();
+            }}
+            className="relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer"
+            title="Daily Missions (Resets every 24h at 12:00 AM IST)"
+          >
+            <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden sm:inline text-[11px]">Missions</span>
+            {claimableMissions > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 text-slate-950 font-black text-[9px] flex items-center justify-center animate-bounce shadow-md">
+                {claimableMissions}
+              </span>
+            )}
           </button>
 
           {/* Scoreboard / Leaderboards Button */}
