@@ -73,7 +73,7 @@ export default function App() {
 
   // Modals State
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [profileInitialTab, setProfileInitialTab] = useState<'profile' | 'avatars' | 'friends' | 'battles'>('profile');
+  const [profileInitialTab, setProfileInitialTab] = useState<'profile' | 'avatars' | 'battles'>('profile');
   const [activeDuelRoomCode, setActiveDuelRoomCode] = useState<string | null>(null);
   const [isDailyMissionsOpen, setIsDailyMissionsOpen] = useState(false);
   const [isPokeMartOpen, setIsPokeMartOpen] = useState(false);
@@ -151,10 +151,23 @@ export default function App() {
     if (urlParams.get('duelRoom')) {
       setMode('1v1');
     }
-    if (urlParams.get('addFriend')) {
-      setProfileInitialTab('friends');
-      setIsProfileOpen(true);
-    }
+  }, []);
+
+  // Cross-tab synchronization: keep active account in sync across browser tabs/windows
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'pokemon_trainer_accounts' || e.key === 'pokemon_active_account_id') {
+        const fresh = getActiveAccount();
+        setAccount((prev) => {
+          if (JSON.stringify(prev) !== JSON.stringify(fresh)) {
+            return fresh;
+          }
+          return prev;
+        });
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
   const handleTokensEarned = (amount: number) => {
@@ -1284,12 +1297,14 @@ export default function App() {
       />
 
       {/* Independent Poké Mart Modal */}
-      <PokeMartModal
-        isOpen={isPokeMartOpen}
-        onClose={() => setIsPokeMartOpen(false)}
-        account={account}
-        onAccountUpdated={(acc) => setAccount({ ...acc })}
-      />
+      {isPokeMartOpen && (
+        <PokeMartModal
+          isOpen={isPokeMartOpen}
+          onClose={() => setIsPokeMartOpen(false)}
+          account={account}
+          onAccountUpdated={(acc) => setAccount({ ...acc })}
+        />
+      )}
 
       {/* Daily Missions Modal (Resets every 24h IST) */}
       <DailyMissionsModal
@@ -1335,11 +1350,6 @@ export default function App() {
         onOpenAchievements={() => {
           setIsProfileOpen(false);
           setIsAchievementsOpen(true);
-        }}
-        onStartDuelWithFriend={(friendName, roomCode) => {
-          setIsProfileOpen(false);
-          setActiveDuelRoomCode(roomCode || null);
-          setMode('1v1');
         }}
       />
 

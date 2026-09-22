@@ -151,8 +151,8 @@ const BASE_ACHIEVEMENTS: Achievement[] = [
   },
   {
     id: 'trainer_fellowship',
-    title: 'Pokémon Networker',
-    description: 'Add a rival or friend to your Trainer Friend List.',
+    title: 'Battle Arena Duelist',
+    description: 'Participate in a 1v1 Battle Arena duel or trial.',
     category: 'collector',
     progress: 0,
     maxProgress: 1,

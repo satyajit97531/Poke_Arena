@@ -151,20 +151,18 @@ function getTransporter() {
 const inMemoryTrainers = new Map<string, Record<string, unknown>>();
 const inMemoryOtps = new Map<string, { otp: string; expiresAt: number }>();
 const inMemoryHighScores: Array<Record<string, unknown>> = [];
-const inMemoryFriendRequests = new Map<string, any>();
-const inMemoryBattleChallenges = new Map<string, any>();
 
 // Seed iconic trainers for friendly matching and discovery
 const SEED_TRAINERS: Array<Record<string, unknown>> = [
-  { id: 'acc_blue', username: 'trainer_blue', displayName: 'Trainer Blue', avatarId: 88, level: 35, trophyPoints: 32000, friends: ['Trainer Red', 'Champion Cynthia'] },
-  { id: 'acc_cynthia', username: 'champion_cynthia', displayName: 'Champion Cynthia', avatarId: 98, level: 42, trophyPoints: 48000, friends: ['Trainer Red', 'Trainer Blue'] },
-  { id: 'acc_brock', username: 'gym_leader_brock', displayName: 'Gym Leader Brock', avatarId: 115, level: 25, trophyPoints: 14000, friends: ['Trainer Red', 'Misty'] },
-  { id: 'acc_red', username: 'trainer_red', displayName: 'Trainer Red', avatarId: 25, level: 50, trophyPoints: 65000, friends: ['Trainer Blue', 'Champion Cynthia'] },
-  { id: 'acc_ash', username: 'ash_ketchum', displayName: 'Ash Ketchum', avatarId: 25, level: 45, trophyPoints: 52000, friends: ['Gym Leader Brock', 'Misty'] },
-  { id: 'acc_misty', username: 'misty', displayName: 'Misty', avatarId: 120, level: 28, trophyPoints: 16000, friends: ['Ash Ketchum', 'Gym Leader Brock'] },
-  { id: 'acc_steven', username: 'steven_stone', displayName: 'Steven Stone', avatarId: 99, level: 44, trophyPoints: 49000, friends: ['Champion Cynthia'] },
-  { id: 'acc_leon', username: 'champion_leon', displayName: 'Leon', avatarId: 100, level: 46, trophyPoints: 54000, friends: ['Trainer Red'] },
-  { id: 'acc_lance', username: 'dragon_master_lance', displayName: 'Lance', avatarId: 101, level: 40, trophyPoints: 43000, friends: ['Trainer Blue'] },
+  { id: 'acc_blue', username: 'trainer_blue', displayName: 'Trainer Blue', avatarId: 88, level: 35, trophyPoints: 32000 },
+  { id: 'acc_cynthia', username: 'champion_cynthia', displayName: 'Champion Cynthia', avatarId: 98, level: 42, trophyPoints: 48000 },
+  { id: 'acc_brock', username: 'gym_leader_brock', displayName: 'Gym Leader Brock', avatarId: 115, level: 25, trophyPoints: 14000 },
+  { id: 'acc_red', username: 'trainer_red', displayName: 'Trainer Red', avatarId: 25, level: 50, trophyPoints: 65000 },
+  { id: 'acc_ash', username: 'ash_ketchum', displayName: 'Ash Ketchum', avatarId: 25, level: 45, trophyPoints: 52000 },
+  { id: 'acc_misty', username: 'misty', displayName: 'Misty', avatarId: 120, level: 28, trophyPoints: 16000 },
+  { id: 'acc_steven', username: 'steven_stone', displayName: 'Steven Stone', avatarId: 99, level: 44, trophyPoints: 49000 },
+  { id: 'acc_leon', username: 'champion_leon', displayName: 'Leon', avatarId: 100, level: 46, trophyPoints: 54000 },
+  { id: 'acc_lance', username: 'dragon_master_lance', displayName: 'Lance', avatarId: 101, level: 40, trophyPoints: 43000 },
 ];
 
 for (const t of SEED_TRAINERS) {
@@ -197,22 +195,47 @@ function findTrainerInMemory(query: string): Record<string, unknown> | null {
   return null;
 }
 
-// Real-time online presence tracking for friends and multiplayer
-const userPresence = new Map<string, number>();
+function getOrInitTrainer(
+  userId: string,
+  username: string,
+  displayName?: string,
+  avatarId?: number
+): Record<string, unknown> {
+  const cleanU = String(username || userId || 'trainer').trim().toLowerCase().replace(/^@/, '');
+  const normU = cleanU.replace(/[\s_-]/g, '');
+  const cleanD = String(displayName || username || 'Trainer').trim();
 
-function markUserOnline(identifier: string) {
-  if (!identifier) return;
-  const now = Date.now();
-  const cleaned = identifier.trim().toLowerCase().replace(/^@/, '');
-  userPresence.set(cleaned, now);
-}
+  let trainer: any =
+    (userId ? inMemoryTrainers.get(userId) : null) ||
+    findTrainerInMemory(userId) ||
+    findTrainerInMemory(cleanU) ||
+    (cleanD ? findTrainerInMemory(cleanD) : null);
 
-function isUserOnline(identifier: string): boolean {
-  if (!identifier) return false;
-  const cleaned = identifier.trim().toLowerCase().replace(/^@/, '');
-  const lastSeen = userPresence.get(cleaned);
-  if (!lastSeen) return false;
-  return Date.now() - lastSeen < 45000; // Online if active within last 45 seconds
+  if (!trainer) {
+    trainer = {
+      id: userId || `acc_${normU}_${Date.now()}`,
+      username: cleanU,
+      displayName: cleanD,
+      avatarId: Number(avatarId) || 25,
+      level: 5,
+      trophyPoints: 1000,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+
+  // Register across all indexing keys so lookups by ID, username, or displayName always resolve to this trainer
+  if (trainer.id) inMemoryTrainers.set(String(trainer.id), trainer);
+  if (cleanU) {
+    inMemoryTrainers.set(cleanU, trainer);
+    inMemoryTrainers.set(normU, trainer);
+  }
+  if (cleanD) {
+    inMemoryTrainers.set(cleanD.toLowerCase(), trainer);
+    inMemoryTrainers.set(cleanD.toLowerCase().replace(/[\s_-]/g, ''), trainer);
+  }
+
+  return trainer;
 }
 
 // Email validation helper
@@ -700,7 +723,7 @@ app.post('/api/account/sync', async (req, res) => {
   }
 });
 
-// 5.5 Lookup Trainer by Unique Username (for Friend List Network)
+// 5.5 Lookup Trainer by Unique Username
 app.get('/api/trainers/by-username/:username', async (req, res) => {
   try {
     const rawUsername = String(req.params.username || '').trim().toLowerCase();
@@ -773,507 +796,6 @@ app.get('/api/trainers/lookup', async (req, res) => {
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     return res.status(500).json({ error: errorMsg });
-  }
-});
-
-// 5.7 Send Friend Request (with max 100 friends limit, flexible lookup, and auto-registration)
-app.post('/api/friends/send-request', async (req, res) => {
-  try {
-    const { fromUserId, fromUsername, fromDisplayName, fromAvatarId, targetQuery } = req.body;
-    if (!fromUserId || !fromUsername || !targetQuery) {
-      return res.status(400).json({ error: 'Missing required request parameters.' });
-    }
-
-    const cleanTarget = String(targetQuery).trim().replace(/^@/, '');
-    const cleanFromUname = String(fromUsername).trim().toLowerCase().replace(/^@/, '');
-    const normTarget = cleanTarget.toLowerCase().replace(/[\s_-]/g, '');
-    const normFrom = cleanFromUname.replace(/[\s_-]/g, '');
-
-    if (normTarget === normFrom || cleanTarget === fromUserId) {
-      return res.status(400).json({ error: 'You cannot send a friend request to yourself.' });
-    }
-
-    const database = await getDb();
-    let targetTrainer: any = null;
-    let senderTrainer: any = null;
-
-    if (database) {
-      targetTrainer = await database.collection('trainers').findOne({
-        $or: [
-          { id: cleanTarget },
-          { username: { $regex: new RegExp(`^${cleanTarget}$`, 'i') } },
-          { displayName: { $regex: new RegExp(`^${cleanTarget}$`, 'i') } },
-        ],
-      });
-      senderTrainer = await database.collection('trainers').findOne({
-        $or: [{ id: fromUserId }, { username: cleanFromUname }],
-      });
-    }
-
-    if (!targetTrainer) {
-      targetTrainer = findTrainerInMemory(cleanTarget);
-    }
-    if (!senderTrainer) {
-      senderTrainer = findTrainerInMemory(fromUserId) || findTrainerInMemory(cleanFromUname);
-    }
-
-    // If target trainer is not found yet but is a valid trainer name, dynamically create so the request can be queued
-    if (!targetTrainer && cleanTarget.length >= 2) {
-      targetTrainer = {
-        id: `acc_${normTarget}_${Math.random().toString(36).slice(2, 6)}`,
-        username: cleanTarget.toLowerCase().replace(/\s+/g, '_'),
-        displayName: cleanTarget,
-        avatarId: 25,
-        level: Math.floor(Math.random() * 25) + 5,
-        trophyPoints: Math.floor(Math.random() * 10000) + 1000,
-        friends: [],
-        createdAt: new Date().toISOString(),
-      };
-      inMemoryTrainers.set(String(targetTrainer.id), targetTrainer);
-      inMemoryTrainers.set(String(targetTrainer.username), targetTrainer);
-      inMemoryTrainers.set(normTarget, targetTrainer);
-      if (database) {
-        try {
-          await database.collection('trainers').insertOne(targetTrainer);
-        } catch {
-          // ignore
-        }
-      }
-    }
-
-    // Auto-register sender in memory if needed
-    if (!senderTrainer) {
-      senderTrainer = {
-        id: fromUserId,
-        username: cleanFromUname,
-        displayName: fromDisplayName || cleanFromUname,
-        avatarId: fromAvatarId || 25,
-        friends: [],
-        createdAt: new Date().toISOString(),
-      };
-      inMemoryTrainers.set(fromUserId, senderTrainer);
-      inMemoryTrainers.set(cleanFromUname, senderTrainer);
-      if (database) {
-        try {
-          await database.collection('trainers').insertOne(senderTrainer);
-        } catch {
-          // ignore
-        }
-      }
-    }
-
-    if (!targetTrainer) {
-      return res.status(404).json({
-        error: `Trainer "${cleanTarget}" not found. Check that the User ID or username is exact.`,
-      });
-    }
-
-    const targetUserId = targetTrainer.id || String(targetTrainer._id);
-    const targetUsername = targetTrainer.username;
-    const targetDisplayName = targetTrainer.displayName || targetUsername;
-
-    if (targetUserId === fromUserId || targetUsername.toLowerCase() === cleanFromUname) {
-      return res.status(400).json({ error: 'You cannot send a friend request to yourself.' });
-    }
-
-    // Check 100 friend limit
-    const senderFriends: string[] = senderTrainer?.friends || [];
-    if (senderFriends.length >= 100) {
-      return res.status(400).json({ error: 'You have reached the maximum limit of 100 friends.' });
-    }
-    const targetFriends: string[] = targetTrainer.friends || [];
-    if (targetFriends.length >= 100) {
-      return res.status(400).json({ error: `Trainer @${targetUsername} has reached the limit of 100 friends.` });
-    }
-
-    // Check if already friends
-    const isAlreadyFriend = senderFriends.some(
-      (f) =>
-        f.toLowerCase() === targetUsername.toLowerCase() ||
-        f.toLowerCase() === targetDisplayName.toLowerCase() ||
-        f.toLowerCase().replace(/[\s_-]/g, '') === normTarget
-    );
-    if (isAlreadyFriend) {
-      return res.status(400).json({ error: `@${targetUsername} is already on your friends list!` });
-    }
-
-    // Check if duplicate pending request exists
-    const requestId = `freq_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    const newRequest = {
-      id: requestId,
-      fromUserId,
-      fromUsername: cleanFromUname,
-      fromDisplayName: fromDisplayName || cleanFromUname,
-      fromAvatar: fromAvatarId || 25,
-      toUserId: targetUserId,
-      toUsername: targetUsername,
-      toDisplayName: targetDisplayName,
-      toAvatar: targetTrainer.avatarId || 25,
-      status: 'pending',
-      createdAt: Date.now(),
-    };
-
-    if (database) {
-      const existingReq = await database.collection('friend_requests').findOne({
-        status: 'pending',
-        $or: [
-          { fromUsername: cleanFromUname, toUsername: targetUsername },
-          { fromUsername: targetUsername, toUsername: cleanFromUname },
-        ],
-      });
-
-      if (existingReq) {
-        if (existingReq.fromUsername.toLowerCase() === cleanFromUname) {
-          return res.status(400).json({ error: 'You have already sent a friend request to this trainer.' });
-        } else {
-          return res.status(400).json({
-            error: `@${targetUsername} has already sent you a friend request! Check your Received tab.`,
-          });
-        }
-      }
-
-      await database.collection('friend_requests').insertOne(newRequest);
-    } else {
-      for (const r of inMemoryFriendRequests.values()) {
-        if (
-          r.status === 'pending' &&
-          ((r.fromUsername === cleanFromUname && r.toUsername === targetUsername) ||
-            (r.fromUsername === targetUsername && r.toUsername === cleanFromUname))
-        ) {
-          return res.status(400).json({ error: 'A pending friend request already exists between you two.' });
-        }
-      }
-      inMemoryFriendRequests.set(requestId, newRequest);
-    }
-
-    return res.json({
-      success: true,
-      request: newRequest,
-      message: `Friend request sent to @${targetUsername}!`,
-    });
-  } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error('Error sending friend request:', errorMsg);
-    return res.status(500).json({ error: 'Failed to send friend request.' });
-  }
-});
-
-// 5.75 Presence Heartbeat (Real-time online/offline indicator)
-app.post('/api/presence/heartbeat', (req, res) => {
-  try {
-    const { userId, username, displayName } = req.body || {};
-    if (userId) markUserOnline(userId);
-    if (username) markUserOnline(username);
-    if (displayName) markUserOnline(displayName);
-    return res.json({ success: true, timestamp: Date.now() });
-  } catch (err: unknown) {
-    return res.status(500).json({ error: 'Presence update failed' });
-  }
-});
-
-// 5.8 Get All Friend System Data (Friends, Received Requests, Sent Requests, Online Presence)
-app.get('/api/friends/data/:userId', async (req, res) => {
-  try {
-    const userId = String(req.params.userId || '').trim();
-    const username = String(req.query.username || '').trim().toLowerCase().replace(/^@/, '');
-
-    if (userId) markUserOnline(userId);
-    if (username) markUserOnline(username);
-
-    const database = await getDb();
-    let received: any[] = [];
-    let sent: any[] = [];
-    let friends: string[] = [];
-
-    let initialFriendsParam: string[] = [];
-    if (req.query.friends) {
-      try {
-        const parsed = JSON.parse(String(req.query.friends));
-        if (Array.isArray(parsed)) initialFriendsParam = parsed;
-      } catch {
-        // ignore
-      }
-    }
-
-    if (database) {
-      const trainer = await database.collection('trainers').findOne({
-        $or: [{ id: userId }, { username }],
-      });
-      if (trainer && Array.isArray(trainer.friends)) {
-        friends = trainer.friends;
-      } else if (initialFriendsParam.length > 0) {
-        friends = initialFriendsParam;
-      }
-
-      received = await database
-        .collection('friend_requests')
-        .find({
-          status: 'pending',
-          $or: [{ toUserId: userId }, { toUsername: username }],
-        })
-        .sort({ createdAt: -1 })
-        .toArray();
-
-      sent = await database
-        .collection('friend_requests')
-        .find({
-          status: 'pending',
-          $or: [{ fromUserId: userId }, { fromUsername: username }],
-        })
-        .sort({ createdAt: -1 })
-        .toArray();
-    } else {
-      const trainer =
-        inMemoryTrainers.get(userId) ||
-        findTrainerInMemory(userId) ||
-        findTrainerInMemory(username);
-
-      if (trainer && Array.isArray(trainer.friends)) {
-        friends = trainer.friends as string[];
-      } else if (initialFriendsParam.length > 0) {
-        friends = initialFriendsParam;
-        if (trainer) {
-          trainer.friends = initialFriendsParam;
-        }
-      }
-
-      for (const r of inMemoryFriendRequests.values()) {
-        if (r.status === 'pending') {
-          if (r.toUserId === userId || r.toUsername === username) received.push(r);
-          if (r.fromUserId === userId || r.fromUsername === username) sent.push(r);
-        }
-      }
-    }
-
-    // Build real-time online status map for all friends
-    const onlineStatus: Record<string, boolean> = {};
-    friends.forEach((friendName) => {
-      onlineStatus[friendName] = isUserOnline(friendName);
-    });
-
-    return res.json({
-      success: true,
-      friends,
-      onlineStatus,
-      friendCount: friends.length,
-      maxFriends: 100,
-      received,
-      sent,
-    });
-  } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    return res.status(500).json({ error: errorMsg });
-  }
-});
-
-// 5.9 Respond to Friend Request (Accept or Reject)
-app.post('/api/friends/respond', async (req, res) => {
-  try {
-    const { requestId, action, userId, username } = req.body;
-    if (!requestId || !action || !['accept', 'reject'].includes(action)) {
-      return res.status(400).json({ error: 'Valid requestId and action (accept/reject) are required.' });
-    }
-
-    const database = await getDb();
-    let request: any = null;
-
-    if (database) {
-      request = await database.collection('friend_requests').findOne({ id: requestId });
-    } else {
-      request = inMemoryFriendRequests.get(requestId);
-    }
-
-    if (!request || request.status !== 'pending') {
-      return res.status(404).json({ error: 'Friend request not found or has already been resolved.' });
-    }
-
-    if (action === 'reject') {
-      if (database) {
-        await database.collection('friend_requests').deleteOne({ id: requestId });
-      } else {
-        inMemoryFriendRequests.delete(requestId);
-      }
-      return res.json({ success: true, action: 'reject', message: 'Friend request rejected and removed.' });
-    }
-
-    // Action === 'accept'
-    const userA_id = request.fromUserId;
-    const userA_name = request.fromDisplayName || request.fromUsername;
-    const userB_id = request.toUserId;
-    const userB_name = request.toDisplayName || request.toUsername;
-
-    if (database) {
-      const trainerA = await database.collection('trainers').findOne({
-        $or: [{ id: userA_id }, { username: request.fromUsername }],
-      });
-      const trainerB = await database.collection('trainers').findOne({
-        $or: [{ id: userB_id }, { username: request.toUsername }],
-      });
-
-      const friendsA = (trainerA?.friends || []) as string[];
-      const friendsB = (trainerB?.friends || []) as string[];
-
-      if (friendsA.length >= 100 || friendsB.length >= 100) {
-        return res.status(400).json({ error: 'Cannot accept request: Friend limit of 100 has been reached.' });
-      }
-
-      await database.collection('trainers').updateOne(
-        { $or: [{ id: userA_id }, { username: request.fromUsername }] },
-        { $addToSet: { friends: userB_name } }
-      );
-      await database.collection('trainers').updateOne(
-        { $or: [{ id: userB_id }, { username: request.toUsername }] },
-        { $addToSet: { friends: userA_name } }
-      );
-
-      // Once accepted, delete request so it is completely resolved
-      await database.collection('friend_requests').deleteOne({ id: requestId });
-    } else {
-      const trainerA = inMemoryTrainers.get(userA_id);
-      const trainerB = inMemoryTrainers.get(userB_id);
-      if (trainerA) {
-        const fA = ((trainerA.friends as string[]) || []).slice(0, 100);
-        if (!fA.includes(userB_name)) fA.push(userB_name);
-        trainerA.friends = fA;
-      }
-      if (trainerB) {
-        const fB = ((trainerB.friends as string[]) || []).slice(0, 100);
-        if (!fB.includes(userA_name)) fB.push(userA_name);
-        trainerB.friends = fB;
-      }
-      inMemoryFriendRequests.delete(requestId);
-    }
-
-    return res.json({
-      success: true,
-      action: 'accept',
-      friendName: request.fromDisplayName || request.fromUsername,
-      message: `You and @${request.fromUsername} are now official friends!`,
-    });
-  } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error('Error resolving friend request:', errorMsg);
-    return res.status(500).json({ error: 'Failed to resolve friend request.' });
-  }
-});
-
-// 5.10 Cancel Sent Friend Request
-app.post('/api/friends/cancel-request', async (req, res) => {
-  try {
-    const { requestId } = req.body;
-    if (!requestId) return res.status(400).json({ error: 'Request ID is required.' });
-
-    const database = await getDb();
-    if (database) {
-      await database.collection('friend_requests').deleteOne({ id: requestId });
-    } else {
-      inMemoryFriendRequests.delete(requestId);
-    }
-
-    return res.json({ success: true, message: 'Friend request cancelled.' });
-  } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    return res.status(500).json({ error: errorMsg });
-  }
-});
-
-// 5.11 Remove Friend
-app.post('/api/friends/remove', async (req, res) => {
-  try {
-    const { userId, username, friendName } = req.body;
-    if (!friendName) return res.status(400).json({ error: 'Friend name is required.' });
-
-    const database = await getDb();
-    if (database) {
-      await database.collection('trainers').updateOne(
-        { $or: [{ id: userId }, { username }] },
-        { $pull: { friends: friendName } as any }
-      );
-    } else {
-      const trainer = inMemoryTrainers.get(userId) || [...inMemoryTrainers.values()].find((t) => t.username === username);
-      if (trainer && Array.isArray(trainer.friends)) {
-        trainer.friends = (trainer.friends as string[]).filter((f) => f !== friendName);
-      }
-    }
-
-    return res.json({ success: true, message: `Removed ${friendName} from your friends.` });
-  } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    return res.status(500).json({ error: errorMsg });
-  }
-});
-
-// 5.12 Send 1v1 Battle Challenge to Friend
-app.post('/api/friends/challenge', async (req, res) => {
-  try {
-    const { fromUserId, fromUsername, fromDisplayName, fromAvatarId, toFriendName, difficulty = 'extreme' } = req.body;
-    if (!fromUsername || !toFriendName) {
-      return res.status(400).json({ error: 'Challenger and friend name are required.' });
-    }
-
-    const roomCode = `FRND-${Math.floor(1000 + Math.random() * 9000)}`;
-    const questions = generateQuestionsForRoom(5, 'all');
-
-    const duelRoom: DuelRoomState = {
-      code: roomCode,
-      host: {
-        id: fromUserId || `host_${Date.now()}`,
-        name: fromDisplayName || fromUsername,
-        avatarId: Number(fromAvatarId) || 25,
-        score: 0,
-        baseScore: 0,
-        speedScore: 0,
-        answers: [],
-        times: [],
-      },
-      guest: null,
-      rounds: 5,
-      timeLimit: 30, // 30 seconds for Extreme & Menacing
-      difficulty: difficulty || 'extreme',
-      region: 'all',
-      status: 'waiting',
-      questions,
-      currentRoundIdx: 0,
-      roundStartTime: 0,
-      firstAnswerer: null,
-      roundAnswers: {},
-      lastRoundBreakdown: null,
-      createdAt: Date.now(),
-      lastActivity: Date.now(),
-    };
-
-    activeDuelRooms.set(roomCode, duelRoom);
-
-    const challengeId = `chal_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const challengeData = {
-      id: challengeId,
-      fromUsername,
-      fromDisplayName: fromDisplayName || fromUsername,
-      fromAvatarId: fromAvatarId || 25,
-      toFriendName,
-      roomCode,
-      difficulty,
-      status: 'pending',
-      createdAt: Date.now(),
-    };
-
-    const database = await getDb();
-    if (database) {
-      await database.collection('battle_challenges').insertOne(challengeData);
-    } else {
-      inMemoryBattleChallenges.set(challengeId, challengeData);
-    }
-
-    return res.json({
-      success: true,
-      roomCode,
-      challengeId,
-      message: `Battle challenge dispatched to ${toFriendName}! Room code: ${roomCode}`,
-    });
-  } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error('Error creating friend battle challenge:', errorMsg);
-    return res.status(500).json({ error: 'Failed to create battle challenge.' });
   }
 });
 

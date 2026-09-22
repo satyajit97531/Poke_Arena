@@ -44,7 +44,6 @@ export function createDefaultAccount(username: string = 'Trainer Red', pin: stri
     trophies: {},
     showcasedAchievements: [],
     flexItems: [],
-    friends: ['Trainer Blue', 'Champion Cynthia', 'Gym Leader Brock'],
     dailyStreak: 1,
     lastLoginDateIST: '',
     claimedDailyStreakDays: [],
@@ -171,8 +170,8 @@ export function evaluateAchievements(
     cryGuessed?: boolean;
     moveGuessed?: boolean;
     difficulty?: string;
-    friendAdded?: boolean;
     is1v1Win?: boolean;
+    gamePlayed?: boolean;
     battlePredicted?: boolean;
     dailyCompleted?: boolean;
     dailyClaimed?: boolean;
@@ -271,7 +270,7 @@ export function evaluateAchievements(
     } else if (ach.id === 'hall_of_fame_legend' && (params.pointsScored || 0) >= 5000) {
       record.progress = params.pointsScored || 0;
       shouldUnlock = true;
-    } else if (ach.id === 'trainer_fellowship' && params.friendAdded) {
+    } else if (ach.id === 'trainer_fellowship' && (params.gameMode === '1v1' || params.gamePlayed || params.battlePredicted)) {
       record.progress = 1;
       shouldUnlock = true;
     } else if (ach.id === 'battle_predictor_ace' && params.battlePredicted) {

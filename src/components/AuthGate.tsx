@@ -12,6 +12,8 @@ import {
   RefreshCw,
   UserPlus,
   LogIn,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { TrainerAccount } from '../types/pokemon';
@@ -30,6 +32,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   // UI States
   const [isLoading, setIsLoading] = useState(false);
@@ -37,8 +40,11 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
   const [successMessage, setSuccessMessage] = useState('');
   const [emailTouched, setEmailTouched] = useState(false);
 
-  // Live validity check: shows "Invalid email" if user typed an invalid address
-  const isCurrentEmailInvalid = emailTouched && email.trim().length > 0 && !isValidEmail(email.trim());
+  // Strict email validation helpers
+  const cleanEmail = email.trim().toLowerCase();
+  const isEmailValid = isValidEmail(cleanEmail);
+  const isEmailEmpty = cleanEmail.length === 0;
+  const showEmailError = (emailTouched || cleanEmail.length > 0) && !isEmailValid;
 
   const triggerConfetti = () => {
     try {
@@ -61,6 +67,12 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     setEmailTouched(true);
 
     const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
+      setError('Email address is required. Please enter your email to sign up.');
+      sound.playWrong();
+      return;
+    }
+
     const validationError = getEmailValidationError(cleanEmail);
     if (validationError) {
       setError(validationError);
@@ -126,6 +138,12 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     setEmailTouched(true);
 
     const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
+      setError('Email address is required. Please enter your email to log in.');
+      sound.playWrong();
+      return;
+    }
+
     const validationError = getEmailValidationError(cleanEmail);
     if (validationError) {
       setError(validationError);
@@ -220,6 +238,8 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
             onClick={() => {
               sound.playButtonPress();
               setTab('signup');
+              setShowPassword(false);
+              setEmailTouched(false);
               setError('');
               setSuccessMessage('');
             }}
@@ -238,6 +258,8 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
             onClick={() => {
               sound.playButtonPress();
               setTab('login');
+              setShowPassword(false);
+              setEmailTouched(false);
               setError('');
               setSuccessMessage('');
             }}
@@ -267,6 +289,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                   type="button"
                   onClick={() => {
                     setTab('login');
+                    setShowPassword(false);
                     setError('');
                   }}
                   className="block mt-1 font-bold text-cyan-400 hover:underline"
@@ -297,15 +320,22 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                 <label className="block text-xs font-semibold text-slate-300">
                   Trainer Email Address
                 </label>
-                {isCurrentEmailInvalid && (
-                  <span className="text-[11px] font-bold text-rose-400 flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" />
-                    Invalid email
+                {isEmailValid ? (
+                  <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    Valid email
                   </span>
-                )}
+                ) : showEmailError ? (
+                  <span className="text-[11px] font-bold text-rose-400 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
+                    {isEmailEmpty ? 'Email is required' : 'Invalid email format'}
+                  </span>
+                ) : null}
               </div>
               <div className="relative">
-                <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+                <Mail className={`w-4 h-4 absolute left-3 top-3.5 transition-colors ${
+                  isEmailValid ? 'text-emerald-400' : showEmailError ? 'text-rose-400' : 'text-slate-400'
+                }`} />
                 <input
                   id="input-signup-email"
                   type="email"
@@ -317,13 +347,31 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                     setEmail(e.target.value);
                     if (error) setError('');
                   }}
-                  className={`w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border text-white text-sm focus:outline-none transition-colors ${
-                    isCurrentEmailInvalid
+                  className={`w-full pl-9 pr-9 py-2.5 rounded-xl bg-slate-950 border text-white text-sm focus:outline-none transition-all ${
+                    isEmailValid
+                      ? 'border-emerald-500/80 ring-1 ring-emerald-500/30 focus:border-emerald-500 focus:ring-emerald-500/50'
+                      : showEmailError
                       ? 'border-rose-500 ring-1 ring-rose-500/50 focus:border-rose-500 focus:ring-rose-500'
                       : 'border-slate-800 focus:border-rose-500 focus:ring-1 focus:ring-rose-500'
                   }`}
                 />
+                {isEmailValid && (
+                  <div className="absolute right-3 top-3 text-emerald-400 pointer-events-none">
+                    <CheckCircle2 className="w-4 h-4" />
+                  </div>
+                )}
+                {showEmailError && (
+                  <div className="absolute right-3 top-3 text-rose-400 pointer-events-none">
+                    <AlertCircle className="w-4 h-4" />
+                  </div>
+                )}
               </div>
+              {showEmailError && (
+                <p className="text-[11px] text-rose-400 mt-1 flex items-center gap-1 font-medium">
+                  <AlertCircle className="w-3 h-3 shrink-0" />
+                  <span>{isEmailEmpty ? 'Please enter your email address.' : 'Invalid email. Must be in format user@domain.com'}</span>
+                </p>
+              )}
             </div>
 
             <div>
@@ -344,33 +392,61 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Password
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-slate-300">
+                  Password <span className="text-slate-400 font-normal">(min 4 characters)</span>
+                </label>
+              </div>
               <div className="relative">
-                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3.5 pointer-events-none" />
                 <input
                   id="input-signup-password"
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   required
                   placeholder="At least 4 characters"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    if (error) setError('');
+                  }}
+                  className="w-full pl-9 pr-11 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
                 />
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  id="btn-signup-toggle-password"
+                  onClick={() => {
+                    sound.playButtonPress();
+                    setShowPassword((prev) => !prev);
+                  }}
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/80 transition-colors cursor-pointer"
+                >
+                  {showPassword ? (
+                    <EyeOff className="w-4 h-4 text-rose-400" />
+                  ) : (
+                    <Eye className="w-4 h-4 text-slate-400" />
+                  )}
+                </button>
               </div>
             </div>
 
             <button
               type="submit"
               id="btn-signup-submit"
-              disabled={isLoading}
-              className="w-full py-3 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white font-display font-bold text-sm uppercase tracking-wider shadow-lg shadow-rose-950/50 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+              disabled={isLoading || (!isEmailEmpty && !isEmailValid)}
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white font-display font-bold text-sm uppercase tracking-wider shadow-lg shadow-rose-950/50 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
               {isLoading ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
                   <span>Creating Account...</span>
+                </>
+              ) : !isEmailEmpty && !isEmailValid ? (
+                <>
+                  <AlertCircle className="w-4 h-4" />
+                  <span>Invalid Email Address</span>
                 </>
               ) : (
                 <>
@@ -390,15 +466,22 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                 <label className="block text-xs font-semibold text-slate-300">
                   Registered Email
                 </label>
-                {isCurrentEmailInvalid && (
-                  <span className="text-[11px] font-bold text-rose-400 flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" />
-                    Invalid email
+                {isEmailValid ? (
+                  <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    Valid email
                   </span>
-                )}
+                ) : showEmailError ? (
+                  <span className="text-[11px] font-bold text-rose-400 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
+                    {isEmailEmpty ? 'Email is required' : 'Invalid email format'}
+                  </span>
+                ) : null}
               </div>
               <div className="relative">
-                <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+                <Mail className={`w-4 h-4 absolute left-3 top-3.5 transition-colors ${
+                  isEmailValid ? 'text-emerald-400' : showEmailError ? 'text-rose-400' : 'text-slate-400'
+                }`} />
                 <input
                   id="input-login-email"
                   type="email"
@@ -410,43 +493,89 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                     setEmail(e.target.value);
                     if (error) setError('');
                   }}
-                  className={`w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border text-white text-sm focus:outline-none transition-colors ${
-                    isCurrentEmailInvalid
+                  className={`w-full pl-9 pr-9 py-2.5 rounded-xl bg-slate-950 border text-white text-sm focus:outline-none transition-all ${
+                    isEmailValid
+                      ? 'border-emerald-500/80 ring-1 ring-emerald-500/30 focus:border-emerald-500 focus:ring-emerald-500/50'
+                      : showEmailError
                       ? 'border-rose-500 ring-1 ring-rose-500/50 focus:border-rose-500 focus:ring-rose-500'
                       : 'border-slate-800 focus:border-rose-500 focus:ring-1 focus:ring-rose-500'
                   }`}
                 />
+                {isEmailValid && (
+                  <div className="absolute right-3 top-3 text-emerald-400 pointer-events-none">
+                    <CheckCircle2 className="w-4 h-4" />
+                  </div>
+                )}
+                {showEmailError && (
+                  <div className="absolute right-3 top-3 text-rose-400 pointer-events-none">
+                    <AlertCircle className="w-4 h-4" />
+                  </div>
+                )}
               </div>
+              {showEmailError && (
+                <p className="text-[11px] text-rose-400 mt-1 flex items-center gap-1 font-medium">
+                  <AlertCircle className="w-3 h-3 shrink-0" />
+                  <span>{isEmailEmpty ? 'Please enter your email address.' : 'Invalid email. Must be in format user@domain.com'}</span>
+                </p>
+              )}
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Password
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-slate-300">
+                  Password
+                </label>
+              </div>
               <div className="relative">
-                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3.5 pointer-events-none" />
                 <input
                   id="input-login-password"
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   required
                   placeholder="Enter your password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    if (error) setError('');
+                  }}
+                  className="w-full pl-9 pr-11 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
                 />
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  id="btn-login-toggle-password"
+                  onClick={() => {
+                    sound.playButtonPress();
+                    setShowPassword((prev) => !prev);
+                  }}
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/80 transition-colors cursor-pointer"
+                >
+                  {showPassword ? (
+                    <EyeOff className="w-4 h-4 text-rose-400" />
+                  ) : (
+                    <Eye className="w-4 h-4 text-slate-400" />
+                  )}
+                </button>
               </div>
             </div>
 
             <button
               type="submit"
               id="btn-login-submit"
-              disabled={isLoading}
-              className="w-full py-3 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white font-display font-bold text-sm uppercase tracking-wider shadow-lg shadow-rose-950/50 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+              disabled={isLoading || (!isEmailEmpty && !isEmailValid)}
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white font-display font-bold text-sm uppercase tracking-wider shadow-lg shadow-rose-950/50 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
               {isLoading ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
                   <span>Logging In...</span>
+                </>
+              ) : !isEmailEmpty && !isEmailValid ? (
+                <>
+                  <AlertCircle className="w-4 h-4" />
+                  <span>Invalid Email Address</span>
                 </>
               ) : (
                 <>

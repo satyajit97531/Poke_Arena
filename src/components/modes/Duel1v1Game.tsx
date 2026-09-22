@@ -586,7 +586,7 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
                 <span>Host Custom Room & QR Code</span>
               </h3>
               <p className="text-xs text-slate-400 mt-1">
-                Configure your duel rules and invite a friend on another phone or computer.
+                Configure your duel rules and invite a rival player on another phone or computer.
               </p>
             </div>
 
