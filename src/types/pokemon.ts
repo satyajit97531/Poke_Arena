@@ -251,6 +251,7 @@ export interface TrainerAccount {
   achievements: Record<string, { progress: number; unlocked: boolean; unlockedAt?: string }>;
   trophies: Record<string, { progress: number; unlocked: boolean; unlockedAt?: string }>;
   showcasedAchievements?: string[];
+  flexItems?: string[]; // Up to 3 item IDs showcased in profile to flex
   friends?: string[];
   // Battle History (FIFO, maximum 25 battles)
   battleHistory?: BattleRecord[];

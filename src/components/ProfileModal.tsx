@@ -51,6 +51,7 @@ import { TROPHY_ROAD_REWARDS, TRAINING_BOUNTIES_REWARDS, TrophyMilestoneReward, 
 import { TRAINER_AVATARS, TrainerAvatar, getAccountAvatarUrl, getAccountAvatarName, getTrainerFrameBorder, getTrainerBadgeClass } from '../data/trainerAvatars';
 import { createDefaultAccount, getAllAccounts, saveActiveAccount, saveAllAccounts, setActiveAccountId, syncAccountToMongo, evaluateAchievements } from '../utils/accounts';
 import { sound } from '../utils/audio';
+import { isValidEmail, getEmailValidationError } from '../utils/validation';
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -168,7 +169,8 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   const loadFriendData = React.useCallback(async () => {
     try {
       const uname = account.username || account.displayName;
-      const res = await fetch(`/api/friends/data/${encodeURIComponent(account.id)}?username=${encodeURIComponent(uname)}`);
+      const friendsParam = encodeURIComponent(JSON.stringify(account.friends || []));
+      const res = await fetch(`/api/friends/data/${encodeURIComponent(account.id)}?username=${encodeURIComponent(uname)}&friends=${friendsParam}`);
       const data = await res.json();
       if (data.success) {
         if (Array.isArray(data.friends)) {
@@ -200,12 +202,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   if (!isOpen) return null;
 
   const allAccounts = getAllAccounts();
-
-  // Email format validator
-  const isValidEmail = (email: string) => {
-    const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    return re.test(email.trim());
-  };
 
   // Trigger confetti effect
   const triggerConfetti = () => {
@@ -476,13 +472,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     setAuthSuccess('');
 
     const cleanEmail = authEmail.trim().toLowerCase();
-    if (!cleanEmail) {
-      setAuthError('Please enter an email address.');
-      return;
-    }
-
-    if (!isValidEmail(cleanEmail)) {
-      setAuthError('Please enter a valid email address (e.g., trainer@pokemon.com).');
+    const validationError = getEmailValidationError(cleanEmail);
+    if (validationError) {
+      setAuthError(validationError);
       return;
     }
 
@@ -587,13 +579,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     setAuthSuccess('');
 
     const cleanEmail = authEmail.trim().toLowerCase();
-    if (!cleanEmail) {
-      setAuthError('Please enter your email.');
-      return;
-    }
-
-    if (!isValidEmail(cleanEmail)) {
-      setAuthError('Please enter a valid email address.');
+    const validationError = getEmailValidationError(cleanEmail);
+    if (validationError) {
+      setAuthError(validationError);
       return;
     }
 
@@ -1554,6 +1542,23 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                       <p className="text-[11px] text-slate-500">
                         Share your unique QR code or enter a Trainer ID / @username above to add friends!
                       </p>
+                      <div className="mt-3.5 flex flex-wrap justify-center items-center gap-1.5">
+                        <span className="text-[11px] text-slate-400">Quick Add:</span>
+                        {['Trainer Blue', 'Champion Cynthia', 'Gym Leader Brock'].map((suggested) => (
+                          <button
+                            key={suggested}
+                            type="button"
+                            onClick={() => {
+                              setNewFriendName(suggested);
+                              handleSendFriendRequest(suggested);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold border border-slate-700/70 transition-all flex items-center gap-1 shadow-sm"
+                          >
+                            <UserPlus className="w-3 h-3 text-emerald-400" />
+                            <span>{suggested}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">

@@ -526,7 +526,8 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
                   onChange={(e) => {
                     const d = e.target.value as GameDifficulty;
                     setDifficulty(d);
-                    if (d === 'extreme' || d === 'menacing') setTimeLimit(30);
+                    if (d === 'extreme') setTimeLimit(30);
+                    if (d === 'menacing') setTimeLimit(60);
                   }}
                   className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl p-2.5 outline-none focus:border-amber-500"
                 >
@@ -534,7 +535,7 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
                   <option value="medium">Medium (12s)</option>
                   <option value="hard">Hard (8s)</option>
                   <option value="extreme">Extreme (30s - 4 Options & Classified Dossier)</option>
-                  <option value="menacing">Menacing (30s - Manual Typing & Classified Dossier)</option>
+                  <option value="menacing">Menacing (60s - Manual Typing & Classified Dossier)</option>
                 </select>
               </div>
 
@@ -641,7 +642,8 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
                   onChange={(e) => {
                     const d = e.target.value as GameDifficulty;
                     setDifficulty(d);
-                    if (d === 'extreme' || d === 'menacing') setTimeLimit(30);
+                    if (d === 'extreme') setTimeLimit(30);
+                    if (d === 'menacing') setTimeLimit(60);
                   }}
                   className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl p-2.5 outline-none focus:border-amber-500"
                 >
@@ -649,7 +651,7 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
                   <option value="medium">Medium (Close Decoys - 12s)</option>
                   <option value="hard">Hard (Fast Pace - 8s)</option>
                   <option value="extreme">Extreme (Classified Dossier & 4 Options - 30s)</option>
-                  <option value="menacing">Menacing (Classified Dossier & Manual Typing - 30s)</option>
+                  <option value="menacing">Menacing (Classified Dossier & Manual Typing - 60s)</option>
                 </select>
               </div>
 
@@ -1033,7 +1035,7 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
 
         {/* Clues */}
         <div className="flex items-center justify-center gap-2 flex-wrap text-xs">
-          {curQ.types.map((t) => (
+          {room.difficulty !== 'menacing' && curQ.types.map((t) => (
             <span
               key={t}
               className="px-3 py-1 rounded-full bg-slate-800 text-slate-200 border border-slate-700 capitalize font-medium"
@@ -1083,10 +1085,12 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
                   {(curQ.height / 10).toFixed(1)}m / {(curQ.weight / 10).toFixed(1)}kg
                 </span>
               </div>
-              <div className="bg-black/30 p-2 rounded-xl col-span-2 sm:col-span-1">
-                <span className="text-slate-400 block text-[9px] uppercase font-bold">Primary Type</span>
-                <span className="font-semibold capitalize">{curQ.types.join(' / ')}</span>
-              </div>
+              {room.difficulty !== 'menacing' && (
+                <div className="bg-black/30 p-2 rounded-xl col-span-2 sm:col-span-1">
+                  <span className="text-slate-400 block text-[9px] uppercase font-bold">Primary Type</span>
+                  <span className="font-semibold capitalize">{curQ.types.join(' / ')}</span>
+                </div>
+              )}
             </div>
           </div>
         )}

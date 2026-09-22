@@ -154,6 +154,49 @@ const inMemoryHighScores: Array<Record<string, unknown>> = [];
 const inMemoryFriendRequests = new Map<string, any>();
 const inMemoryBattleChallenges = new Map<string, any>();
 
+// Seed iconic trainers for friendly matching and discovery
+const SEED_TRAINERS: Array<Record<string, unknown>> = [
+  { id: 'acc_blue', username: 'trainer_blue', displayName: 'Trainer Blue', avatarId: 88, level: 35, trophyPoints: 32000, friends: ['Trainer Red', 'Champion Cynthia'] },
+  { id: 'acc_cynthia', username: 'champion_cynthia', displayName: 'Champion Cynthia', avatarId: 98, level: 42, trophyPoints: 48000, friends: ['Trainer Red', 'Trainer Blue'] },
+  { id: 'acc_brock', username: 'gym_leader_brock', displayName: 'Gym Leader Brock', avatarId: 115, level: 25, trophyPoints: 14000, friends: ['Trainer Red', 'Misty'] },
+  { id: 'acc_red', username: 'trainer_red', displayName: 'Trainer Red', avatarId: 25, level: 50, trophyPoints: 65000, friends: ['Trainer Blue', 'Champion Cynthia'] },
+  { id: 'acc_ash', username: 'ash_ketchum', displayName: 'Ash Ketchum', avatarId: 25, level: 45, trophyPoints: 52000, friends: ['Gym Leader Brock', 'Misty'] },
+  { id: 'acc_misty', username: 'misty', displayName: 'Misty', avatarId: 120, level: 28, trophyPoints: 16000, friends: ['Ash Ketchum', 'Gym Leader Brock'] },
+  { id: 'acc_steven', username: 'steven_stone', displayName: 'Steven Stone', avatarId: 99, level: 44, trophyPoints: 49000, friends: ['Champion Cynthia'] },
+  { id: 'acc_leon', username: 'champion_leon', displayName: 'Leon', avatarId: 100, level: 46, trophyPoints: 54000, friends: ['Trainer Red'] },
+  { id: 'acc_lance', username: 'dragon_master_lance', displayName: 'Lance', avatarId: 101, level: 40, trophyPoints: 43000, friends: ['Trainer Blue'] },
+];
+
+for (const t of SEED_TRAINERS) {
+  const normU = String(t.username).toLowerCase().replace(/[\s_-]/g, '');
+  const normD = String(t.displayName).toLowerCase().replace(/[\s_-]/g, '');
+  inMemoryTrainers.set(String(t.id), t);
+  inMemoryTrainers.set(String(t.username).toLowerCase(), t);
+  inMemoryTrainers.set(normU, t);
+  inMemoryTrainers.set(normD, t);
+}
+
+function findTrainerInMemory(query: string): Record<string, unknown> | null {
+  const clean = query.trim().replace(/^@/, '');
+  const norm = clean.toLowerCase().replace(/[\s_-]/g, '');
+  if (!norm) return null;
+  if (inMemoryTrainers.has(clean)) return inMemoryTrainers.get(clean)!;
+  if (inMemoryTrainers.has(clean.toLowerCase())) return inMemoryTrainers.get(clean.toLowerCase())!;
+  if (inMemoryTrainers.has(norm)) return inMemoryTrainers.get(norm)!;
+
+  for (const t of inMemoryTrainers.values()) {
+    const tId = String(t.id || '');
+    const tUname = String(t.username || '').toLowerCase();
+    const tDname = String(t.displayName || '').toLowerCase();
+    const normU = tUname.replace(/[\s_-]/g, '');
+    const normD = tDname.replace(/[\s_-]/g, '');
+    if (tId === clean || tUname === clean.toLowerCase() || tDname === clean.toLowerCase() || normU === norm || normD === norm) {
+      return t;
+    }
+  }
+  return null;
+}
+
 // Real-time online presence tracking for friends and multiplayer
 const userPresence = new Map<string, number>();
 
@@ -175,8 +218,29 @@ function isUserOnline(identifier: string): boolean {
 // Email validation helper
 function isValidEmail(email: string): boolean {
   if (!email || typeof email !== 'string') return false;
+  const trimmed = email.trim();
+  if (trimmed.length < 5 || trimmed.length > 254) return false;
+  if (/\s/.test(trimmed)) return false;
+  if (trimmed.includes('..')) return false;
+
+  const atParts = trimmed.split('@');
+  if (atParts.length !== 2) return false;
+  const [localPart, domainPart] = atParts;
+  if (!localPart || !domainPart) return false;
+  if (localPart.startsWith('.') || localPart.endsWith('.')) return false;
+  if (domainPart.startsWith('.') || domainPart.endsWith('.') || domainPart.startsWith('-') || domainPart.endsWith('-')) return false;
+
+  const domainParts = domainPart.split('.');
+  if (domainParts.length < 2) return false;
+  for (const part of domainParts) {
+    if (!part || !/^[a-zA-Z0-9-]+$/.test(part)) return false;
+    if (part.startsWith('-') || part.endsWith('-')) return false;
+  }
+  const tld = domainParts[domainParts.length - 1];
+  if (!tld || tld.length < 2 || !/^[a-zA-Z]+$/.test(tld)) return false;
+
   const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-  return emailRegex.test(email.trim());
+  return emailRegex.test(trimmed);
 }
 
 // ======================== API ROUTES ========================
@@ -205,7 +269,7 @@ app.post('/api/auth/send-signup-otp', async (req, res) => {
 
     // Validate email format
     if (!isValidEmail(normalizedEmail)) {
-      return res.status(400).json({ error: 'Please enter a valid email address (e.g., trainer@pokemon.com).' });
+      return res.status(400).json({ error: 'Invalid email. Please enter a valid email address.' });
     }
 
     const database = await getDb();
@@ -647,19 +711,23 @@ app.get('/api/trainers/by-username/:username', async (req, res) => {
     const database = await getDb();
     if (database) {
       const trainer = await database.collection('trainers').findOne(
-        { username: { $regex: new RegExp(`^${rawUsername}$`, 'i') } },
+        {
+          $or: [
+            { username: { $regex: new RegExp(`^${rawUsername}$`, 'i') } },
+            { displayName: { $regex: new RegExp(`^${rawUsername}$`, 'i') } },
+          ],
+        },
         { projection: { password: 0, email: 0 } }
       );
       if (trainer) {
         return res.json({ success: true, exists: true, trainer });
       }
-    } else {
-      for (const t of inMemoryTrainers.values()) {
-        if (String(t.username || '').toLowerCase() === rawUsername) {
-          const { password: _, email: __, ...safe } = t;
-          return res.json({ success: true, exists: true, trainer: safe });
-        }
-      }
+    }
+
+    const memoryTrainer = findTrainerInMemory(rawUsername);
+    if (memoryTrainer) {
+      const { password: _, email: __, ...safe } = memoryTrainer;
+      return res.json({ success: true, exists: true, trainer: safe });
     }
 
     return res.status(404).json({ error: `Trainer with username "${rawUsername}" not found.`, exists: false });
@@ -669,7 +737,7 @@ app.get('/api/trainers/by-username/:username', async (req, res) => {
   }
 });
 
-// 5.6 Universal Trainer Search (by User ID, username, or scanned QR code query)
+// 5.6 Universal Trainer Search (by User ID, username, or display name)
 app.get('/api/trainers/lookup', async (req, res) => {
   try {
     const query = String(req.query.query || '').trim().replace(/^@/, '');
@@ -679,7 +747,6 @@ app.get('/api/trainers/lookup', async (req, res) => {
 
     const database = await getDb();
     if (database) {
-      // Try ID match, username exact/regex match, or email match
       const trainer = await database.collection('trainers').findOne(
         {
           $or: [
@@ -694,16 +761,12 @@ app.get('/api/trainers/lookup', async (req, res) => {
       if (trainer) {
         return res.json({ success: true, exists: true, trainer });
       }
-    } else {
-      for (const t of inMemoryTrainers.values()) {
-        const tId = String(t.id || '');
-        const tUname = String(t.username || '').toLowerCase();
-        const tDname = String(t.displayName || '').toLowerCase();
-        if (tId === query || tUname === query.toLowerCase() || tDname === query.toLowerCase()) {
-          const { password: _, email: __, ...safe } = t;
-          return res.json({ success: true, exists: true, trainer: safe });
-        }
-      }
+    }
+
+    const memoryTrainer = findTrainerInMemory(query);
+    if (memoryTrainer) {
+      const { password: _, email: __, ...safe } = memoryTrainer;
+      return res.json({ success: true, exists: true, trainer: safe });
     }
 
     return res.status(404).json({ error: `Trainer "${query}" not found.`, exists: false });
@@ -713,7 +776,7 @@ app.get('/api/trainers/lookup', async (req, res) => {
   }
 });
 
-// 5.7 Send Friend Request (with max 100 friends limit and duplicate validation)
+// 5.7 Send Friend Request (with max 100 friends limit, flexible lookup, and auto-registration)
 app.post('/api/friends/send-request', async (req, res) => {
   try {
     const { fromUserId, fromUsername, fromDisplayName, fromAvatarId, targetQuery } = req.body;
@@ -723,8 +786,10 @@ app.post('/api/friends/send-request', async (req, res) => {
 
     const cleanTarget = String(targetQuery).trim().replace(/^@/, '');
     const cleanFromUname = String(fromUsername).trim().toLowerCase().replace(/^@/, '');
+    const normTarget = cleanTarget.toLowerCase().replace(/[\s_-]/g, '');
+    const normFrom = cleanFromUname.replace(/[\s_-]/g, '');
 
-    if (cleanTarget.toLowerCase() === cleanFromUname || cleanTarget === fromUserId) {
+    if (normTarget === normFrom || cleanTarget === fromUserId) {
       return res.status(400).json({ error: 'You cannot send a friend request to yourself.' });
     }
 
@@ -743,15 +808,56 @@ app.post('/api/friends/send-request', async (req, res) => {
       senderTrainer = await database.collection('trainers').findOne({
         $or: [{ id: fromUserId }, { username: cleanFromUname }],
       });
-    } else {
-      for (const t of inMemoryTrainers.values()) {
-        const tId = String(t.id || '');
-        const tUname = String(t.username || '').toLowerCase();
-        if (tId === cleanTarget || tUname === cleanTarget.toLowerCase()) {
-          targetTrainer = t;
+    }
+
+    if (!targetTrainer) {
+      targetTrainer = findTrainerInMemory(cleanTarget);
+    }
+    if (!senderTrainer) {
+      senderTrainer = findTrainerInMemory(fromUserId) || findTrainerInMemory(cleanFromUname);
+    }
+
+    // If target trainer is not found yet but is a valid trainer name, dynamically create so the request can be queued
+    if (!targetTrainer && cleanTarget.length >= 2) {
+      targetTrainer = {
+        id: `acc_${normTarget}_${Math.random().toString(36).slice(2, 6)}`,
+        username: cleanTarget.toLowerCase().replace(/\s+/g, '_'),
+        displayName: cleanTarget,
+        avatarId: 25,
+        level: Math.floor(Math.random() * 25) + 5,
+        trophyPoints: Math.floor(Math.random() * 10000) + 1000,
+        friends: [],
+        createdAt: new Date().toISOString(),
+      };
+      inMemoryTrainers.set(String(targetTrainer.id), targetTrainer);
+      inMemoryTrainers.set(String(targetTrainer.username), targetTrainer);
+      inMemoryTrainers.set(normTarget, targetTrainer);
+      if (database) {
+        try {
+          await database.collection('trainers').insertOne(targetTrainer);
+        } catch {
+          // ignore
         }
-        if (tId === fromUserId || tUname === cleanFromUname) {
-          senderTrainer = t;
+      }
+    }
+
+    // Auto-register sender in memory if needed
+    if (!senderTrainer) {
+      senderTrainer = {
+        id: fromUserId,
+        username: cleanFromUname,
+        displayName: fromDisplayName || cleanFromUname,
+        avatarId: fromAvatarId || 25,
+        friends: [],
+        createdAt: new Date().toISOString(),
+      };
+      inMemoryTrainers.set(fromUserId, senderTrainer);
+      inMemoryTrainers.set(cleanFromUname, senderTrainer);
+      if (database) {
+        try {
+          await database.collection('trainers').insertOne(senderTrainer);
+        } catch {
+          // ignore
         }
       }
     }
@@ -782,7 +888,10 @@ app.post('/api/friends/send-request', async (req, res) => {
 
     // Check if already friends
     const isAlreadyFriend = senderFriends.some(
-      (f) => f.toLowerCase() === targetUsername.toLowerCase() || f.toLowerCase() === targetDisplayName.toLowerCase()
+      (f) =>
+        f.toLowerCase() === targetUsername.toLowerCase() ||
+        f.toLowerCase() === targetDisplayName.toLowerCase() ||
+        f.toLowerCase().replace(/[\s_-]/g, '') === normTarget
     );
     if (isAlreadyFriend) {
       return res.status(400).json({ error: `@${targetUsername} is already on your friends list!` });
@@ -876,12 +985,24 @@ app.get('/api/friends/data/:userId', async (req, res) => {
     let sent: any[] = [];
     let friends: string[] = [];
 
+    let initialFriendsParam: string[] = [];
+    if (req.query.friends) {
+      try {
+        const parsed = JSON.parse(String(req.query.friends));
+        if (Array.isArray(parsed)) initialFriendsParam = parsed;
+      } catch {
+        // ignore
+      }
+    }
+
     if (database) {
       const trainer = await database.collection('trainers').findOne({
         $or: [{ id: userId }, { username }],
       });
       if (trainer && Array.isArray(trainer.friends)) {
         friends = trainer.friends;
+      } else if (initialFriendsParam.length > 0) {
+        friends = initialFriendsParam;
       }
 
       received = await database
@@ -902,9 +1023,18 @@ app.get('/api/friends/data/:userId', async (req, res) => {
         .sort({ createdAt: -1 })
         .toArray();
     } else {
-      const trainer = inMemoryTrainers.get(userId) || [...inMemoryTrainers.values()].find((t) => t.username === username);
+      const trainer =
+        inMemoryTrainers.get(userId) ||
+        findTrainerInMemory(userId) ||
+        findTrainerInMemory(username);
+
       if (trainer && Array.isArray(trainer.friends)) {
         friends = trainer.friends as string[];
+      } else if (initialFriendsParam.length > 0) {
+        friends = initialFriendsParam;
+        if (trainer) {
+          trainer.friends = initialFriendsParam;
+        }
       }
 
       for (const r of inMemoryFriendRequests.values()) {

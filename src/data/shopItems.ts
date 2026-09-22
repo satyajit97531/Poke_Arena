@@ -35,7 +35,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_poke_ball',
     name: 'Poké Ball (Pack of 10)',
-    description: 'In-Game Use: Throw in any quiz question to eliminate 1 incorrect choice!',
+    description: 'Prestige Collectible: The timeless standard Poké Ball to flex your trainer heritage on your profile.',
     category: 'ball',
     rarity: 'normal',
     cost: 5000,
@@ -46,7 +46,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_potion',
     name: 'Super Potion',
-    description: 'In-Game Use: Restores vitality and grants +100 bonus Trainer EXP!',
+    description: 'Prestige Collectible: High-grade restorative spray bottle to display as a status symbol.',
     category: 'medicine',
     rarity: 'normal',
     cost: 5000,
@@ -57,7 +57,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_full_heal',
     name: 'Full Heal & Elixir',
-    description: 'In-Game Use: Cleanses status penalties and awards +100 Trainer EXP!',
+    description: 'Prestige Collectible: Premium medicine canister that signifies an elite traveling trainer.',
     category: 'medicine',
     rarity: 'normal',
     cost: 5000,
@@ -68,7 +68,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_revive_single',
     name: 'Trainer Revive Capsule',
-    description: 'In-Game Use: Restores 1 lost life in Survival Mode or awards +100 Trainer EXP!',
+    description: 'Prestige Collectible: Golden crystallized shard to showcase your unwavering spirit on your profile.',
     category: 'medicine',
     rarity: 'normal',
     cost: 5000,
@@ -79,7 +79,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_antidote_spray',
     name: 'Silph Antidote & Burn Heal Spray',
-    description: 'In-Game Use: Clears battle burns and poison penalties; awards +100 Trainer EXP!',
+    description: 'Prestige Collectible: Classic Silph Co. survival canister to flex your field preparedness.',
     category: 'medicine',
     rarity: 'normal',
     cost: 5000,
@@ -90,7 +90,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_paralyze_spray',
     name: 'Paralyze Heal & Awakening Tonic',
-    description: 'In-Game Use: Relieves paralysis and awards +100 Trainer EXP!',
+    description: 'Prestige Collectible: Rare herbal remedy flask to proudly exhibit in your profile flex showcase.',
     category: 'medicine',
     rarity: 'normal',
     cost: 5000,
@@ -101,7 +101,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_escape_rope',
     name: 'Silph Escape Rope',
-    description: 'In-Game Use: Safely skips any difficult question with zero streak penalty!',
+    description: 'Prestige Collectible: Braided nylon explorer rope from Silph Co. to flex on your trainer card.',
     category: 'key',
     rarity: 'normal',
     cost: 5000,
@@ -112,7 +112,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_poke_doll',
     name: 'Clefairy Poké Doll Decoy',
-    description: 'In-Game Use: Activates a Streak Shield for 5 minutes protecting from wrong answers!',
+    description: 'Prestige Collectible: Huggable Clefairy plushie souvenir to flex your cozy aesthetic in profile.',
     category: 'held',
     rarity: 'normal',
     cost: 5000,
@@ -127,7 +127,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_great_ball',
     name: 'Great Ball (Pack of 5)',
-    description: 'In-Game Use: Throw in any quiz question to eliminate 2 incorrect choices (50/50)!',
+    description: 'Prestige Collectible: Sleek blue and red high-performance sphere to display in your profile showcase.',
     category: 'ball',
     rarity: 'rare',
     cost: 10000,
@@ -138,7 +138,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_rare_candy',
     name: 'Rare Candy',
-    description: 'In-Game Use: Consume from bag to immediately gain +500 EXP towards your next level!',
+    description: 'Prestige Collectible: Legendary sugary treat packed with energy to flex your Pokémon mastery.',
     category: 'evolution',
     rarity: 'rare',
     cost: 10000,
@@ -149,7 +149,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_thunder_stone',
     name: 'Thunder Stone',
-    description: 'In-Game Use: Activate for x2 EXP for 5 minutes! Supercharge your leveling.',
+    description: 'Prestige Collectible: Sparkling stone etched with lightning bolts to showcase on your profile.',
     category: 'evolution',
     rarity: 'rare',
     cost: 10000,
@@ -160,7 +160,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_fire_stone',
     name: 'Fire Stone',
-    description: 'In-Game Use: Activate for x2 Coins (Battle Tokens) for 5 minutes!',
+    description: 'Prestige Collectible: Warm ember jewel radiating intense heat to flex your fiery passion.',
     category: 'evolution',
     rarity: 'rare',
     cost: 10000,
@@ -171,7 +171,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_water_stone',
     name: 'Water Stone',
-    description: 'In-Game Use: Activate for x2 Trophies (TP) for 5 minutes! Double Trophy Road climb.',
+    description: 'Prestige Collectible: Deep azure gem evoking ocean depths to exhibit in your profile flex slots.',
     category: 'evolution',
     rarity: 'rare',
     cost: 10000,
@@ -182,7 +182,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_leaf_stone',
     name: 'Leaf Stone',
-    description: 'In-Game Use: Activate for Verdant Shield (Streak Protection) for 5 minutes!',
+    description: 'Prestige Collectible: Verdant moss-patterned fossil to flex your harmony with nature.',
     category: 'evolution',
     rarity: 'rare',
     cost: 10000,
@@ -193,7 +193,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_moon_stone',
     name: 'Moon Stone',
-    description: 'In-Game Use: Activate Lunar Sight (Auto Type & Region Clues) for 5 minutes!',
+    description: 'Prestige Collectible: Black lunar meteorite that glows faintly beneath starlight.',
     category: 'evolution',
     rarity: 'rare',
     cost: 10000,
@@ -204,7 +204,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_sun_stone',
     name: 'Sun Stone',
-    description: 'In-Game Use: Activate Solar Radiance (+2x Streak Bonus & Shield) for 5 minutes!',
+    description: 'Prestige Collectible: Solar-flare crystal that gleams like magma in daylight.',
     category: 'evolution',
     rarity: 'rare',
     cost: 10000,
@@ -215,7 +215,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'item_ice_stone',
     name: 'Ice Stone',
-    description: 'In-Game Use: Activate Cryo Freeze (+10 extra seconds on questions) for 5 minutes!',
+    description: 'Prestige Collectible: Permafrost crystalline relic that never melts, perfect for profile flexing.',
     category: 'evolution',
     rarity: 'rare',
     cost: 10000,

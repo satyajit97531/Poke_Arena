@@ -43,6 +43,7 @@ export function createDefaultAccount(username: string = 'Trainer Red', pin: stri
     achievements: {},
     trophies: {},
     showcasedAchievements: [],
+    flexItems: [],
     friends: ['Trainer Blue', 'Champion Cynthia', 'Gym Leader Brock'],
     dailyStreak: 1,
     lastLoginDateIST: '',
@@ -94,6 +95,7 @@ export function getActiveAccount(): TrainerAccount {
   if (typeof current.battleTokens !== 'number') current.battleTokens = 250;
   if (typeof current.exp !== 'number') current.exp = 0;
   if (!current.inventory) current.inventory = {};
+  if (!current.flexItems) current.flexItems = [];
   if (!current.claimedDailyStreakDays) current.claimedDailyStreakDays = [];
   if (!current.unlockedTrainerAvatars) current.unlockedTrainerAvatars = ['red'];
 

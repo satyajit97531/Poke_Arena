@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, CheckCircle2, XCircle, ArrowRight, RefreshCw, Trophy, Clock, Play, GitBranch } from 'lucide-react';
+import { Sparkles, CheckCircle2, XCircle, ArrowRight, RefreshCw, Trophy, Clock, Play, GitBranch, Scissors, Target, Skull, Flame, Shield } from 'lucide-react';
 import { EvolutionChain, GameDifficulty, Pokemon } from '../../types/pokemon';
 import { EVOLUTION_CHAINS } from '../../data/pokemonData';
 import { sound } from '../../utils/audio';
@@ -20,13 +20,119 @@ function generateShuffledDeck(): number[] {
   return indices;
 }
 
+// Crop and zoom configurations for each evolution slot based on difficulty
+function getSlotCropStyle(
+  slotIndex: number,
+  diff: GameDifficulty,
+  isRevealed: boolean
+): {
+  clipStyle: React.CSSProperties;
+  transformStyle: React.CSSProperties;
+  badge: string | null;
+  cutType: 'upper' | 'lower' | 'left' | 'target' | null;
+} {
+  if (isRevealed) {
+    return {
+      clipStyle: {},
+      transformStyle: {},
+      badge: null,
+      cutType: null,
+    };
+  }
+
+  if (diff === 'easy') {
+    return {
+      clipStyle: {},
+      transformStyle: {},
+      badge: null,
+      cutType: null,
+    };
+  }
+
+  if (diff === 'medium') {
+    // Only half part of shadowed pictures of the complete evolution line is visible
+    const isUpper = slotIndex % 2 === 0;
+    return {
+      clipStyle: isUpper
+        ? { clipPath: 'polygon(0% 0%, 100% 0%, 100% 50%, 0% 50%)' }
+        : { clipPath: 'polygon(0% 50%, 100% 50%, 100% 100%, 0% 100%)' },
+      transformStyle: {},
+      badge: isUpper ? '▲ Upper Half' : '▼ Lower Half',
+      cutType: isUpper ? 'upper' : 'lower',
+    };
+  }
+
+  if (diff === 'hard') {
+    // Half part with alternating cuts
+    if (slotIndex === 0) {
+      return {
+        clipStyle: { clipPath: 'polygon(0% 0%, 100% 0%, 100% 50%, 0% 50%)' },
+        transformStyle: {},
+        badge: '▲ Upper Half',
+        cutType: 'upper',
+      };
+    } else if (slotIndex === 1) {
+      return {
+        clipStyle: { clipPath: 'polygon(0% 50%, 100% 50%, 100% 100%, 0% 100%)' },
+        transformStyle: {},
+        badge: '▼ Lower Half',
+        cutType: 'lower',
+      };
+    } else {
+      return {
+        clipStyle: { clipPath: 'polygon(0% 0%, 50% 0%, 50% 100%, 0% 100%)' },
+        transformStyle: {},
+        badge: '◄ Left Half',
+        cutType: 'left',
+      };
+    }
+  }
+
+  if (diff === 'extreme') {
+    // Extreme difficulty: only one part of the body is visible
+    if (slotIndex === 0) {
+      return {
+        clipStyle: {},
+        transformStyle: { transform: 'scale(2.6)', transformOrigin: '50% 18%' },
+        badge: 'Head Target',
+        cutType: 'target',
+      };
+    } else if (slotIndex === 1) {
+      return {
+        clipStyle: {},
+        transformStyle: { transform: 'scale(2.6)', transformOrigin: '50% 84%' },
+        badge: 'Base Target',
+        cutType: 'target',
+      };
+    } else {
+      return {
+        clipStyle: {},
+        transformStyle: { transform: 'scale(2.6)', transformOrigin: '22% 48%' },
+        badge: 'Body Target',
+        cutType: 'target',
+      };
+    }
+  }
+
+  return { clipStyle: {}, transformStyle: {}, badge: null, cutType: null };
+}
+
 export const EvolutionGame: React.FC<EvolutionGameProps> = ({
-  difficulty = 'normal',
+  difficulty = 'easy',
   onScoreEarned,
   onAdvanceMilestone,
 }) => {
   const isExtreme = difficulty === 'extreme';
-  const initialTimeLimit = isExtreme ? 30 : 25;
+  const initialTimeLimit =
+    difficulty === 'menacing'
+      ? 60
+      : difficulty === 'extreme'
+      ? 30
+      : difficulty === 'hard'
+      ? 18
+      : difficulty === 'medium'
+      ? 22
+      : 25;
 
   const [isStarted, setIsStarted] = useState(false);
   const [deck, setDeck] = useState<number[]>(() => generateShuffledDeck());
@@ -129,6 +235,23 @@ export const EvolutionGame: React.FC<EvolutionGameProps> = ({
     setTimerActive(true);
   };
 
+  // Reset game state when difficulty changes so the Start button returns,
+  // exactly matching the Silhouette game mode behavior
+  useEffect(() => {
+    setIsStarted(false);
+    setTimerActive(false);
+    setStatus('idle');
+    setSelectedIndex(null);
+    setRoundTimer(initialTimeLimit);
+    const selectedChainIndex = deck[deckIndex % deck.length] ?? 0;
+    const currentChain = EVOLUTION_CHAINS[selectedChainIndex] || EVOLUTION_CHAINS[0];
+    const shuffled = [...currentChain.stagePokemon].sort(() => Math.random() - 0.5);
+    if (shuffled.every((p, idx) => p.name === currentChain.stagePokemon[idx].name)) {
+      shuffled.reverse();
+    }
+    setCurrentSlots(shuffled);
+  }, [difficulty]);
+
   // Click card to swap
   const handleCardClick = (index: number) => {
     if (status !== 'idle') return;
@@ -164,7 +287,7 @@ export const EvolutionGame: React.FC<EvolutionGameProps> = ({
           </div>
 
           <span className="px-3 py-1 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-bold uppercase tracking-wider mb-2">
-            Unlimited Rounds • Endless Mode
+            Shadow Silhouette Challenge • Endless Mode
           </span>
 
           <h3 className="text-2xl font-black font-display text-white mb-2">
@@ -172,13 +295,13 @@ export const EvolutionGame: React.FC<EvolutionGameProps> = ({
           </h3>
 
           <p className="text-xs sm:text-sm text-slate-300 max-w-md mb-6 leading-relaxed">
-            Sort scrambled Pokémon into their exact evolutionary order from Base Stage ➔ Middle ➔ Final form! The evolution stages remain hidden until you submit your answer.
+            Analyze the shadowed Pokémon silhouettes! In Easy mode full silhouettes are visible, in Medium and Hard modes only half-body slices are visible, and in Extreme mode only one body part is shown. Click and swap cards into their sequential evolutionary order from Base Stage ➔ Middle ➔ Final form!
           </p>
 
           <button
             id="btn-start-evolution-game"
             onClick={handleStartGame}
-            className="py-3.5 px-8 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-display font-black text-sm uppercase tracking-wider shadow-xl shadow-cyan-950/60 transition-all hover:scale-105 active:scale-95 flex items-center gap-2.5"
+            className="py-3.5 px-8 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-display font-black text-sm uppercase tracking-wider shadow-xl shadow-cyan-950/60 transition-all hover:scale-105 active:scale-95 flex items-center gap-2.5 cursor-pointer"
           >
             <Play className="w-4 h-4 fill-white" />
             <span>Start Evolution Challenge</span>
@@ -201,18 +324,50 @@ export const EvolutionGame: React.FC<EvolutionGameProps> = ({
           </span>
         </div>
 
-        <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-slate-300 text-xs font-mono">
-          <Clock className="w-3.5 h-3.5 text-amber-400" />
-          <span>{roundTimer.toFixed(1)}s</span>
+        <div className="flex items-center gap-2">
+          <span
+            className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-md border flex items-center gap-1 ${
+              difficulty === 'easy'
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                : difficulty === 'medium'
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                : difficulty === 'hard'
+                ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                : 'bg-purple-500/25 text-purple-300 border-purple-500/40'
+            }`}
+          >
+            {difficulty === 'easy' && <Shield className="w-3 h-3" />}
+            {difficulty === 'medium' && <Scissors className="w-3 h-3" />}
+            {difficulty === 'hard' && <Target className="w-3 h-3" />}
+            {(difficulty === 'extreme' || difficulty === 'menacing') && <Skull className="w-3 h-3" />}
+            <span>
+              {difficulty === 'easy'
+                ? 'Full Shadow'
+                : difficulty === 'medium' || difficulty === 'hard'
+                ? 'Half-Body Shadow'
+                : '1 Body Part Shadow'}
+            </span>
+          </span>
+
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-slate-300 text-xs font-mono">
+            <Clock className="w-3.5 h-3.5 text-amber-400" />
+            <span>{roundTimer.toFixed(1)}s</span>
+          </div>
         </div>
       </div>
 
       <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col items-center">
         <h3 className="text-xl font-bold font-display text-white mb-1">
-          {chain.name}
+          {status !== 'idle' ? chain.name : 'Mystery Evolution Line'}
         </h3>
         <p className="text-xs text-slate-400 mb-6 text-center">
-          Click any two Pokémon cards to swap their positions until they are in sequential evolution order. Stages will be revealed upon confirmation!
+          {status === 'idle'
+            ? difficulty === 'easy'
+              ? 'Analyze the full shadowed silhouettes and click two cards to swap them into sequential evolutionary order!'
+              : difficulty === 'medium' || difficulty === 'hard'
+              ? 'Only half of each shadowed Pokémon is visible! Swap cards into sequential evolutionary order.'
+              : 'Extreme Difficulty: Only one body part of each shadowed Pokémon is visible! Swap cards into sequential order.'
+            : 'Evolution line results revealed below!'}
         </p>
 
         {/* Evolution Slots */}
@@ -221,6 +376,7 @@ export const EvolutionGame: React.FC<EvolutionGameProps> = ({
             const isSelected = selectedIndex === idx;
             const stageInfo = getStageBadge(poke);
             const isSlotCorrect = status !== 'idle' && chain.stagePokemon[idx].name === poke.name;
+            const cropInfo = getSlotCropStyle(idx, difficulty, status !== 'idle');
 
             return (
               <motion.div
@@ -245,21 +401,53 @@ export const EvolutionGame: React.FC<EvolutionGameProps> = ({
                   )}
                 </div>
 
-                <div className="w-28 h-28 flex items-center justify-center relative my-2">
-                  <div className="w-24 h-24 rounded-full bg-slate-900/80 -z-0 absolute"></div>
-                  <img
-                    src={poke.artwork}
-                    alt={poke.displayName}
-                    className="max-h-24 w-auto object-contain drop-shadow-md select-none"
-                  />
+                <div className="w-28 h-28 flex items-center justify-center relative my-2 overflow-hidden rounded-xl bg-slate-900/90 border border-slate-800">
+                  <div className="w-20 h-20 rounded-full bg-slate-800/40 -z-0 absolute"></div>
+
+                  {/* Dashed line cut overlay for half-body modes */}
+                  {status === 'idle' && (cropInfo.cutType === 'upper' || cropInfo.cutType === 'lower') && (
+                    <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 border-b border-dashed border-amber-400/50 pointer-events-none z-20" />
+                  )}
+                  {status === 'idle' && cropInfo.cutType === 'left' && (
+                    <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 border-r border-dashed border-amber-400/50 pointer-events-none z-20" />
+                  )}
+
+                  {/* Reticle overlay for extreme one body part target */}
+                  {status === 'idle' && cropInfo.cutType === 'target' && (
+                    <div className="absolute inset-1 pointer-events-none border border-purple-500/30 rounded-lg flex items-center justify-center z-20">
+                      <div className="w-12 h-12 rounded-full border border-dashed border-purple-400/50 animate-pulse" />
+                    </div>
+                  )}
+
+                  <div
+                    className="w-full h-full flex items-center justify-center transition-all duration-500 relative z-10"
+                    style={{ ...cropInfo.clipStyle, ...cropInfo.transformStyle }}
+                  >
+                    <img
+                      src={poke.artwork}
+                      alt={status !== 'idle' ? poke.displayName : 'Mystery Pokémon Silhouette'}
+                      className={`max-h-24 w-auto object-contain select-none transition-all duration-500 ${
+                        status !== 'idle' ? 'pokemon-revealed' : 'pokemon-silhouette'
+                      }`}
+                    />
+                  </div>
+
+                  {/* Small crop badge for clarity */}
+                  {status === 'idle' && cropInfo.badge && (
+                    <span className="absolute bottom-1 right-1 z-20 text-[8px] font-bold px-1 py-0.2 rounded bg-slate-950/90 text-slate-300 border border-slate-700/80 uppercase tracking-tighter">
+                      {cropInfo.badge}
+                    </span>
+                  )}
                 </div>
 
                 <div className="text-center mt-2 w-full">
-                  <h4 className="text-sm font-bold font-display text-white">{poke.displayName}</h4>
+                  <h4 className="text-sm font-bold font-display text-white">
+                    {status !== 'idle' ? poke.displayName : '???'}
+                  </h4>
 
                   {/* Stages HIDDEN before submission; REVEALED after submission */}
                   {status === 'idle' ? (
-                    <span className="text-[11px] text-slate-500 font-medium block mt-0.5">
+                    <span className="text-[11px] text-slate-400 font-medium block mt-0.5">
                       {isSelected ? 'Selected to Swap' : 'Position ' + (idx + 1)}
                     </span>
                   ) : (

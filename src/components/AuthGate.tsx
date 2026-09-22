@@ -17,6 +17,7 @@ import confetti from 'canvas-confetti';
 import { TrainerAccount } from '../types/pokemon';
 import { saveActiveAccount } from '../utils/accounts';
 import { sound } from '../utils/audio';
+import { isValidEmail, getEmailValidationError } from '../utils/validation';
 
 interface AuthGateProps {
   onAuthenticated: (account: TrainerAccount) => void;
@@ -34,12 +35,10 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [emailTouched, setEmailTouched] = useState(false);
 
-  // Email format validator
-  const isValidEmail = (str: string) => {
-    const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    return re.test(str.trim());
-  };
+  // Live validity check: shows "Invalid email" if user typed an invalid address
+  const isCurrentEmailInvalid = emailTouched && email.trim().length > 0 && !isValidEmail(email.trim());
 
   const triggerConfetti = () => {
     try {
@@ -59,20 +58,19 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     e.preventDefault();
     setError('');
     setSuccessMessage('');
+    setEmailTouched(true);
 
     const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail) {
-      setError('Please enter your email address.');
-      return;
-    }
-
-    if (!isValidEmail(cleanEmail)) {
-      setError('Please enter a valid email address (e.g. trainer@example.com).');
+    const validationError = getEmailValidationError(cleanEmail);
+    if (validationError) {
+      setError(validationError);
+      sound.playWrong();
       return;
     }
 
     if (!password || password.length < 4) {
       setError('Password must be at least 4 characters long.');
+      sound.playWrong();
       return;
     }
 
@@ -98,6 +96,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
         } else {
           setError(data.error || 'Failed to create trainer account.');
         }
+        sound.playWrong();
         setIsLoading(false);
         return;
       }
@@ -113,6 +112,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
       }, 700);
     } catch {
       setError('Server connection error. Please make sure the server is reachable.');
+      sound.playWrong();
     } finally {
       setIsLoading(false);
     }
@@ -123,20 +123,19 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     e.preventDefault();
     setError('');
     setSuccessMessage('');
+    setEmailTouched(true);
 
     const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail) {
-      setError('Please enter your email.');
-      return;
-    }
-
-    if (!isValidEmail(cleanEmail)) {
-      setError('Please enter a valid email address.');
+    const validationError = getEmailValidationError(cleanEmail);
+    if (validationError) {
+      setError(validationError);
+      sound.playWrong();
       return;
     }
 
     if (!password) {
       setError('Please enter your password.');
+      sound.playWrong();
       return;
     }
 
@@ -156,7 +155,12 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.error || 'Invalid email or password.');
+        if (data.isRegistered === false) {
+          setError('No trainer account found with this email. Please check your email or sign up.');
+        } else {
+          setError(data.error || 'Invalid email or password.');
+        }
+        sound.playWrong();
         setIsLoading(false);
         return;
       }
@@ -171,6 +175,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
       }, 600);
     } catch {
       setError('Server error during log in. Please try again.');
+      sound.playWrong();
     } finally {
       setIsLoading(false);
     }
@@ -286,11 +291,19 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
 
         {/* ================= SIGN UP FORM ================= */}
         {tab === 'signup' && (
-          <form onSubmit={handleSignUp} className="space-y-4">
+          <form onSubmit={handleSignUp} noValidate className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Trainer Email Address
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-slate-300">
+                  Trainer Email Address
+                </label>
+                {isCurrentEmailInvalid && (
+                  <span className="text-[11px] font-bold text-rose-400 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    Invalid email
+                  </span>
+                )}
+              </div>
               <div className="relative">
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
                 <input
@@ -299,8 +312,16 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                   required
                   placeholder="trainer@pokemon.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                  onBlur={() => setEmailTouched(true)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (error) setError('');
+                  }}
+                  className={`w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border text-white text-sm focus:outline-none transition-colors ${
+                    isCurrentEmailInvalid
+                      ? 'border-rose-500 ring-1 ring-rose-500/50 focus:border-rose-500 focus:ring-rose-500'
+                      : 'border-slate-800 focus:border-rose-500 focus:ring-1 focus:ring-rose-500'
+                  }`}
                 />
               </div>
             </div>
@@ -363,11 +384,19 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
 
         {/* ================= LOG IN FORM ================= */}
         {tab === 'login' && (
-          <form onSubmit={handleLogin} className="space-y-4">
+          <form onSubmit={handleLogin} noValidate className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                Registered Email
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-slate-300">
+                  Registered Email
+                </label>
+                {isCurrentEmailInvalid && (
+                  <span className="text-[11px] font-bold text-rose-400 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    Invalid email
+                  </span>
+                )}
+              </div>
               <div className="relative">
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
                 <input
@@ -376,8 +405,16 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                   required
                   placeholder="trainer@pokemon.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                  onBlur={() => setEmailTouched(true)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (error) setError('');
+                  }}
+                  className={`w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border text-white text-sm focus:outline-none transition-colors ${
+                    isCurrentEmailInvalid
+                      ? 'border-rose-500 ring-1 ring-rose-500/50 focus:border-rose-500 focus:ring-rose-500'
+                      : 'border-slate-800 focus:border-rose-500 focus:ring-1 focus:ring-rose-500'
+                  }`}
                 />
               </div>
             </div>

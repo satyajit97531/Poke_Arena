@@ -1,4 +1,76 @@
-import { TrainerAccount } from '../types/pokemon';
+import { GameDifficulty, MainGameMode, TrainerAccount } from '../types/pokemon';
+
+/**
+ * Returns the EXP multiplier based on game difficulty.
+ * Guaranteed strictly increasing: easy < medium < hard < extreme < menacing
+ * The more the increase in difficulty, the greater the EXP obtained.
+ */
+export function getDifficultyExpMultiplier(difficulty: GameDifficulty = 'easy'): number {
+  switch (difficulty) {
+    case 'easy':
+      return 1.0;
+    case 'medium':
+      return 1.6;
+    case 'hard':
+      return 2.6;
+    case 'extreme':
+      return 4.5;
+    case 'menacing':
+      return 7.5;
+    default:
+      return 1.0;
+  }
+}
+
+/**
+ * Calculate EXP awarded across any game mode with difficulty scaling.
+ */
+export function calculateModeExp(
+  mode: MainGameMode | '1v1_battle',
+  difficulty: GameDifficulty = 'easy',
+  isPerfect: boolean = true,
+  isDoubleExp: boolean = false
+): number {
+  const multiplier = getDifficultyExpMultiplier(difficulty);
+  let baseExp = 40;
+
+  switch (mode) {
+    case 'classic':
+    case 'legendary':
+    case 'blitz':
+    case 'survival':
+    case 'zen':
+      baseExp = 35;
+      break;
+    case 'evolution':
+      baseExp = isPerfect ? 120 : 50;
+      break;
+    case 'cry':
+      baseExp = isPerfect ? 110 : 45;
+      break;
+    case 'moves':
+      baseExp = isPerfect ? 115 : 45;
+      break;
+    case 'region_guess':
+      baseExp = isPerfect ? 105 : 40;
+      break;
+    case 'type_guess':
+      baseExp = isPerfect ? 105 : 40;
+      break;
+    case 'battle':
+      baseExp = isPerfect ? 120 : 50;
+      break;
+    case '1v1':
+    case '1v1_battle':
+      baseExp = isPerfect ? 220 : 90;
+      break;
+    default:
+      baseExp = 50;
+  }
+
+  const calculated = Math.round(baseExp * multiplier);
+  return calculated * (isDoubleExp ? 2 : 1);
+}
 
 /**
  * EXP to level formula:

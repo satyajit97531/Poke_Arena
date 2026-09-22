@@ -19,7 +19,7 @@ export const DifficultySelector: React.FC<DifficultySelectorProps> = ({
     { id: 'medium', label: 'Medium', desc: 'Half Body Slice (15s)', icon: Scissors },
     { id: 'hard', label: 'Hard', desc: 'Body Part Target & Regional Forms (15s)', icon: Target },
     { id: 'extreme', label: 'Extreme', desc: 'Classified Clues & 4 Options (30s)', icon: Skull },
-    { id: 'menacing', label: 'Menacing', desc: 'Classified Clues & Manual Typing (30s)', icon: Flame },
+    { id: 'menacing', label: 'Menacing', desc: 'Classified Clues & Manual Typing (60s)', icon: Flame },
   ];
 
   const levels = allowedDifficulties

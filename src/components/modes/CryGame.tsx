@@ -1,34 +1,36 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Volume2, VolumeX, Play, CheckCircle2, XCircle, ArrowRight, Zap, Clock } from 'lucide-react';
-import { Pokemon } from '../../types/pokemon';
+import { GameDifficulty, Pokemon } from '../../types/pokemon';
 import { CURATED_POKEMON } from '../../data/pokemonData';
 import { sound } from '../../utils/audio';
 
 interface CryGameProps {
+  difficulty?: GameDifficulty;
   onScoreEarned: (points: number, isCorrect: boolean, timeRemaining: number) => void;
   onAdvanceMilestone: () => void;
 }
 
 export const CryGame: React.FC<CryGameProps> = ({
+  difficulty = 'easy',
   onScoreEarned,
   onAdvanceMilestone,
 }) => {
+  const maxTime = difficulty === 'menacing' ? 60 : difficulty === 'extreme' ? 30 : 15;
   const [isStarted, setIsStarted] = useState(false);
   const [correctPokemon, setCorrectPokemon] = useState<Pokemon>(CURATED_POKEMON[0]);
   const [options, setOptions] = useState<Pokemon[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [isAnswered, setIsAnswered] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(12);
-  const maxTime = 12;
+  const [timeLeft, setTimeLeft] = useState(maxTime);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   const loadQuestion = () => {
     setIsAnswered(false);
     setSelectedId(null);
-    setTimeLeft(12);
+    setTimeLeft(maxTime);
 
     // Pick random target
     const target = CURATED_POKEMON[Math.floor(Math.random() * CURATED_POKEMON.length)];

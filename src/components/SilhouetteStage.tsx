@@ -305,8 +305,8 @@ export const SilhouetteStage: React.FC<SilhouetteStageProps> = ({
         </AnimatePresence>
       </div>
 
-      {/* Prominent Elemental Type Hints (Hidden during Extreme mode unrevealed) */}
-      {(isRevealed || difficulty !== 'extreme') && (
+      {/* Prominent Elemental Type Hints (Hidden during Extreme and Menacing modes unrevealed) */}
+      {(isRevealed || (difficulty !== 'extreme' && difficulty !== 'menacing')) && (
         <div className="w-full max-w-xl mt-4 flex flex-col items-center gap-2">
           <div className="flex items-center gap-1.5 text-xs text-slate-400 font-medium">
             <Sparkles className="w-3.5 h-3.5 text-amber-400" />

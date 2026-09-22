@@ -503,7 +503,7 @@ export const PokeMartModal: React.FC<PokeMartModalProps> = ({
               <Package className="w-12 h-12 text-slate-600 mx-auto animate-bounce" />
               <h3 className="text-base font-bold text-white">Your Bag is Empty</h3>
               <p className="text-xs text-slate-400 max-w-md mx-auto">
-                You don't have any usable items in your inventory yet. Purchase evolution stones, Rare Candies, or Potions from the Mart to unlock powerful timed boosts like 2x Trophies and 2x Coins!
+                You don't have any collectible items in your inventory yet. Purchase Poké Balls, evolution stones, and rare artifacts from the Mart to flex on your Trainer Profile!
               </p>
               <button
                 type="button"
@@ -613,17 +613,12 @@ export const PokeMartModal: React.FC<PokeMartModalProps> = ({
                       </div>
 
                       <div className="flex items-center gap-1.5">
-                        {/* Use Item Button if owned */}
-                        {isUsable && (
-                          <button
-                            type="button"
-                            onClick={() => handleUseItem(item.id)}
-                            className="px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 hover:brightness-110 active:scale-95 shadow-md shadow-emerald-950 cursor-pointer"
-                            title="Activate this item's buff!"
-                          >
-                            <Zap className="w-3 h-3 text-slate-950 fill-slate-950" />
-                            <span>Use</span>
-                          </button>
+                        {/* Profile Flex collectible badge if owned */}
+                        {ownedCount > 0 && !isTrainerUnlocked && (
+                          <span className="px-2.5 py-1 rounded-xl text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                            <Sparkles className="w-3 h-3 text-amber-400" />
+                            <span>Profile Flex</span>
+                          </span>
                         )}
 
                         {isTrainerUnlocked ? (
