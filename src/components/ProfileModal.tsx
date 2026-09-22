@@ -115,6 +115,20 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     error: null,
   });
 
+  // Logout confirmation state
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+
+  // Reset logout confirmation when modal closes or active tab changes
+  useEffect(() => {
+    if (!isOpen) {
+      setShowLogoutConfirm(false);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    setShowLogoutConfirm(false);
+  }, [activeTab]);
+
   // Check MongoDB connection status when modal opens
   useEffect(() => {
     if (!isOpen) return;
@@ -805,42 +819,94 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
               {/* Trainer Authentication & Sign Out */}
               {onLogout && (
-                <div className="pt-4 border-t border-slate-800/80 flex items-center justify-between">
-                  <div>
-                    <h5 className="text-xs font-bold text-white">Trainer Account</h5>
-                    <p className="text-[11px] text-slate-400">
-                      Signed in as <span className="text-purple-300 font-semibold font-mono">@{account.username || account.displayName.toLowerCase().replace(/\s+/g, '_')}</span>
-                    </p>
-                    <div className="flex items-center gap-1.5 mt-1">
-                      {mongoStatus.connected ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                          MongoDB Atlas Synced
-                        </span>
-                      ) : (
-                        <span
-                          title={mongoStatus.error || 'Running in local storage & memory mode. Add 0.0.0.0/0 to Atlas Network Access for cloud sync.'}
-                          className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-300/90 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20 cursor-help"
-                        >
-                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                          Local & In-Memory Mode
-                        </span>
-                      )}
+                <div className="pt-4 border-t border-slate-800/80">
+                  {!showLogoutConfirm ? (
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <h5 className="text-xs font-bold text-white">Trainer Account</h5>
+                        <p className="text-[11px] text-slate-400">
+                          Signed in as <span className="text-purple-300 font-semibold font-mono">@{account.username || account.displayName.toLowerCase().replace(/\s+/g, '_')}</span>
+                          {account.email && (
+                            <span className="text-slate-500 font-mono text-[10px] ml-1.5">({account.email})</span>
+                          )}
+                        </p>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          {mongoStatus.connected ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                              MongoDB Atlas Synced
+                            </span>
+                          ) : (
+                            <span
+                              title={mongoStatus.error || 'Running in local storage & memory mode. Add 0.0.0.0/0 to Atlas Network Access for cloud sync.'}
+                              className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-300/90 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20 cursor-help"
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                              Local & In-Memory Mode
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        id="btn-logout-trainer"
+                        type="button"
+                        onClick={() => {
+                          sound.playButtonPress();
+                          setShowLogoutConfirm(true);
+                        }}
+                        className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-bold transition-all hover:scale-105 active:scale-95 cursor-pointer self-start sm:self-auto"
+                      >
+                        <LogOut className="w-3.5 h-3.5 text-rose-400" />
+                        <span>Log Out</span>
+                      </button>
                     </div>
-                  </div>
-                  <button
-                    id="btn-logout-trainer"
-                    type="button"
-                    onClick={() => {
-                      sound.playButtonBack();
-                      onLogout();
-                      onClose();
-                    }}
-                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-bold transition-all hover:scale-105 active:scale-95"
-                  >
-                    <LogOut className="w-3.5 h-3.5 text-rose-400" />
-                    <span>Log Out</span>
-                  </button>
+                  ) : (
+                    <div className="p-3.5 sm:p-4 rounded-2xl bg-rose-950/40 border border-rose-500/40 space-y-3 animate-in fade-in zoom-in-95 duration-200">
+                      <div className="flex items-start gap-3">
+                        <div className="w-8 h-8 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 shrink-0 mt-0.5">
+                          <LogOut className="w-4 h-4" />
+                        </div>
+                        <div className="space-y-1">
+                          <h5 className="text-xs font-bold text-white flex items-center gap-2">
+                            <span>Confirm Log Out</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-mono">
+                              @{account.username || account.displayName}
+                            </span>
+                          </h5>
+                          <p className="text-[11px] text-slate-300 leading-relaxed">
+                            Are you sure you want to log out? Your cloud data is saved on MongoDB Atlas, but you will need to sign in again to access cloud sync.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-rose-900/40">
+                        <button
+                          id="btn-cancel-logout"
+                          type="button"
+                          onClick={() => {
+                            sound.playButtonBack();
+                            setShowLogoutConfirm(false);
+                          }}
+                          className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-semibold transition-colors cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          id="btn-confirm-logout"
+                          type="button"
+                          onClick={() => {
+                            sound.playButtonBack();
+                            onLogout();
+                            onClose();
+                          }}
+                          className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white text-xs font-bold shadow-md shadow-rose-950/50 transition-all hover:scale-105 active:scale-95 cursor-pointer"
+                        >
+                          <LogOut className="w-3.5 h-3.5" />
+                          <span>Confirm Log Out</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
