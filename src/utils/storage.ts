@@ -57,8 +57,23 @@ export function saveProfile(profile: PlayerProfile) {
 }
 
 // Bot / Seed rival accounts to purge so only real players who played are ranked
-const BOT_NAMES = new Set(['cynthia', 'leon', 'steven', 'nemona', 'blue', 'lance']);
-const BOT_IDS = new Set(['1', '2', '3', '4', '5', '6']);
+const BOT_NAMES = new Set([
+  'cynthia', 'champion cynthia', 'champion_cynthia',
+  'leon', 'champion leon', 'champion_leon',
+  'steven', 'steven stone', 'steven_stone',
+  'nemona',
+  'blue', 'trainer blue', 'trainer_blue',
+  'lance', 'dragon master lance', 'dragon_master_lance',
+  'brock', 'gym leader brock', 'gym_leader_brock',
+  'misty',
+  'ash', 'ash ketchum', 'ash_ketchum',
+  'red', 'trainer red', 'trainer_red',
+]);
+const BOT_IDS = new Set([
+  'acc_blue', 'acc_cynthia', 'acc_brock', 'acc_red', 'acc_ash',
+  'acc_misty', 'acc_steven', 'acc_leon', 'acc_lance',
+  '1', '2', '3', '4', '5', '6'
+]);
 
 export function cleanHighScores(records: HighScoreRecord[]): HighScoreRecord[] {
   if (!Array.isArray(records)) return [];

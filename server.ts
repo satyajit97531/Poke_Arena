@@ -150,29 +150,34 @@ function getTransporter() {
 // In-memory fallback stores if MongoDB Atlas is momentarily unavailable
 const inMemoryTrainers = new Map<string, Record<string, unknown>>();
 const inMemoryOtps = new Map<string, { otp: string; expiresAt: number }>();
+const inMemoryPhoneOtps = new Map<string, { otp: string; expiresAt: number; displayName?: string }>();
 const inMemoryHighScores: Array<Record<string, unknown>> = [];
 
-// Seed iconic trainers for friendly matching and discovery
-const SEED_TRAINERS: Array<Record<string, unknown>> = [
-  { id: 'acc_blue', username: 'trainer_blue', displayName: 'Trainer Blue', avatarId: 88, level: 35, trophyPoints: 32000 },
-  { id: 'acc_cynthia', username: 'champion_cynthia', displayName: 'Champion Cynthia', avatarId: 98, level: 42, trophyPoints: 48000 },
-  { id: 'acc_brock', username: 'gym_leader_brock', displayName: 'Gym Leader Brock', avatarId: 115, level: 25, trophyPoints: 14000 },
-  { id: 'acc_red', username: 'trainer_red', displayName: 'Trainer Red', avatarId: 25, level: 50, trophyPoints: 65000 },
-  { id: 'acc_ash', username: 'ash_ketchum', displayName: 'Ash Ketchum', avatarId: 25, level: 45, trophyPoints: 52000 },
-  { id: 'acc_misty', username: 'misty', displayName: 'Misty', avatarId: 120, level: 28, trophyPoints: 16000 },
-  { id: 'acc_steven', username: 'steven_stone', displayName: 'Steven Stone', avatarId: 99, level: 44, trophyPoints: 49000 },
-  { id: 'acc_leon', username: 'champion_leon', displayName: 'Leon', avatarId: 100, level: 46, trophyPoints: 54000 },
-  { id: 'acc_lance', username: 'dragon_master_lance', displayName: 'Lance', avatarId: 101, level: 40, trophyPoints: 43000 },
-];
-
-for (const t of SEED_TRAINERS) {
-  const normU = String(t.username).toLowerCase().replace(/[\s_-]/g, '');
-  const normD = String(t.displayName).toLowerCase().replace(/[\s_-]/g, '');
-  inMemoryTrainers.set(String(t.id), t);
-  inMemoryTrainers.set(String(t.username).toLowerCase(), t);
-  inMemoryTrainers.set(normU, t);
-  inMemoryTrainers.set(normD, t);
+function cleanPhoneNumber(raw: string): string {
+  let cleaned = String(raw).trim().replace(/[^\d+]/g, '');
+  if (!cleaned.startsWith('+') && cleaned.length === 10) {
+    cleaned = '+91' + cleaned;
+  } else if (!cleaned.startsWith('+') && cleaned.length > 0) {
+    cleaned = '+' + cleaned;
+  }
+  return cleaned;
 }
+
+// Bot & fake accounts list to strictly exclude from leaderboards and rankings
+const FAKE_BOT_USERNAMES = new Set([
+  'trainer_blue', 'champion_cynthia', 'gym_leader_brock', 'trainer_red',
+  'ash_ketchum', 'misty', 'steven_stone', 'champion_leon', 'dragon_master_lance',
+  'cynthia', 'leon', 'steven', 'nemona', 'blue', 'lance', 'brock', 'ash', 'red'
+]);
+const FAKE_BOT_NAMES = new Set([
+  'trainer blue', 'champion cynthia', 'gym leader brock', 'trainer red',
+  'ash ketchum', 'misty', 'steven stone', 'leon', 'lance',
+  'cynthia', 'nemona', 'blue', 'brock', 'ash', 'red'
+]);
+const FAKE_BOT_IDS = new Set([
+  'acc_blue', 'acc_cynthia', 'acc_brock', 'acc_red', 'acc_ash',
+  'acc_misty', 'acc_steven', 'acc_leon', 'acc_lance', '1', '2', '3', '4', '5', '6'
+]);
 
 function findTrainerInMemory(query: string): Record<string, unknown> | null {
   const clean = query.trim().replace(/^@/, '');
@@ -609,7 +614,159 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// 4. Login (NO OTP REQUIRED - direct email & password validation)
+// 4. Login with Email OTP
+// 4a. Send Login OTP to registered email
+app.post('/api/auth/send-login-otp', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email address is required.' });
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    // Validate email format
+    if (!isValidEmail(normalizedEmail)) {
+      return res.status(400).json({ error: 'Please enter a valid email address.' });
+    }
+
+    const database = await getDb();
+    let trainer = null;
+
+    if (database) {
+      trainer = await database.collection('trainers').findOne({ email: normalizedEmail });
+    } else {
+      trainer = inMemoryTrainers.get(normalizedEmail) || null;
+    }
+
+    if (!trainer) {
+      return res.status(404).json({
+        error: 'No trainer account found with this email. Please sign up first.',
+        isRegistered: false,
+      });
+    }
+
+    // Validate password if provided
+    if (password && trainer.password && trainer.password !== String(password)) {
+      return res.status(401).json({
+        error: 'Incorrect password. Please verify and try again.',
+      });
+    }
+
+    // Generate secure 6-digit random OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    inMemoryOtps.set(`${normalizedEmail}:login`, { otp, expiresAt });
+
+    // Send email via nodemailer or simulation
+    const transporter = getTransporter();
+    let emailSent = false;
+
+    if (transporter) {
+      try {
+        const fromAddress = process.env.SMTP_FROM || `"Pokémon Arena League" <noreply@pokemonarena.com>`;
+        await transporter.sendMail({
+          from: fromAddress,
+          to: normalizedEmail,
+          subject: `🔐 Your Pokémon Arena Login Verification Code: ${otp}`,
+          html: `
+            <div style="font-family: Arial, sans-serif; background-color: #020617; color: #f8fafc; padding: 32px; border-radius: 16px; max-width: 520px; margin: 0 auto; border: 1px solid #1e293b;">
+              <div style="text-align: center; margin-bottom: 24px;">
+                <h1 style="color: #38bdf8; margin: 0; font-size: 26px; text-transform: uppercase; letter-spacing: 2px;">⚡ Pokémon Arena</h1>
+                <p style="color: #94a3b8; font-size: 14px; margin-top: 6px;">Trainer Login Verification</p>
+              </div>
+
+              <div style="background-color: #0f172a; border: 1px solid #334155; border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 20px;">
+                <p style="color: #e2e8f0; font-size: 15px; margin: 0 0 16px 0;">Use the 6-digit one-time password below to log in to your Trainer Account:</p>
+                <div style="display: inline-block; font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #38bdf8; background: #020617; padding: 12px 28px; border-radius: 8px; border: 2px solid #0284c7; font-family: monospace;">
+                  ${otp}
+                </div>
+                <p style="color: #64748b; font-size: 12px; margin-top: 14px;">This code will expire in 10 minutes. Do not share this code with anyone.</p>
+              </div>
+
+              <div style="text-align: center; font-size: 12px; color: #64748b;">
+                <p>Welcome back to the Pokémon Silhouette Quiz & 1v1 Battle Arena!</p>
+              </div>
+            </div>
+          `,
+          text: `Your Pokémon Arena login code is: ${otp}. It will expire in 10 minutes.`,
+        });
+        emailSent = true;
+      } catch (err: unknown) {
+        console.error('SMTP login mail error:', err);
+      }
+    }
+
+    console.log(`🔑 [LOGIN OTP GENERATED] for ${normalizedEmail}: ${otp} (SMTP Sent: ${emailSent})`);
+
+    return res.json({
+      success: true,
+      message: emailSent
+        ? `A 6-digit login verification code has been sent to ${normalizedEmail}.`
+        : `Login verification code generated for ${normalizedEmail}.`,
+      emailSent,
+      previewOtp: !emailSent ? otp : undefined,
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error('Error in send-login-otp:', errorMsg);
+    return res.status(500).json({ error: 'Failed to send login verification code.' });
+  }
+});
+
+// 4b. Verify Login OTP & Complete Login
+app.post('/api/auth/verify-login-otp', async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      return res.status(400).json({ error: 'Email and verification OTP code are required.' });
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const cleanOtp = String(otp).trim();
+
+    const memoryRecord = inMemoryOtps.get(`${normalizedEmail}:login`);
+    const isValidOtp = !!(memoryRecord && memoryRecord.otp === cleanOtp && memoryRecord.expiresAt > Date.now());
+
+    if (!isValidOtp) {
+      return res.status(400).json({ error: 'Invalid or expired OTP code. Please request a new code.' });
+    }
+
+    inMemoryOtps.delete(`${normalizedEmail}:login`);
+
+    const database = await getDb();
+    let trainer = null;
+
+    if (database) {
+      trainer = await database.collection('trainers').findOne({ email: normalizedEmail });
+    } else {
+      trainer = inMemoryTrainers.get(normalizedEmail) || null;
+    }
+
+    if (!trainer) {
+      return res.status(404).json({ error: 'Trainer account not found.' });
+    }
+
+    const { password: _, ...safeAccount } = trainer;
+
+    console.log(`🔓 Trainer logged in via Email OTP: ${normalizedEmail}`);
+
+    return res.json({
+      success: true,
+      message: `Welcome back, Trainer ${trainer.displayName}!`,
+      account: safeAccount,
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error('Error in verify-login-otp:', errorMsg);
+    return res.status(500).json({ error: 'Failed to verify login OTP.' });
+  }
+});
+
+// 4c. Direct Login Fallback (optional direct credential route)
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -664,50 +821,279 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// 4d. Send SMS OTP for Mobile Number Login & Signup
+app.post('/api/auth/send-phone-otp', async (req, res) => {
+  try {
+    const { phone, displayName } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({ error: 'Mobile phone number is required.' });
+    }
+
+    const cleanPhone = cleanPhoneNumber(phone);
+    const digitsOnly = cleanPhone.replace(/\D/g, '');
+
+    if (digitsOnly.length < 10 || digitsOnly.length > 15) {
+      return res.status(400).json({ error: 'Please enter a valid mobile number (10 to 15 digits).' });
+    }
+
+    // Generate secure 6-digit random OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    inMemoryPhoneOtps.set(cleanPhone, {
+      otp,
+      expiresAt,
+      displayName: displayName ? String(displayName).trim() : undefined,
+    });
+
+    console.log(`📱 [SMS OTP DISPATCH] to ${cleanPhone}: ${otp}`);
+
+    // If external SMS provider (e.g. Twilio) is configured via env
+    let smsSent = false;
+    if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER) {
+      try {
+        const authHeader = 'Basic ' + Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64');
+        const formParams = new URLSearchParams();
+        formParams.append('To', cleanPhone);
+        formParams.append('From', process.env.TWILIO_PHONE_NUMBER);
+        formParams.append('Body', `[Pokémon Arena] Your verification OTP code is ${otp}. Valid for 10 minutes.`);
+
+        const twilioRes = await fetch(
+          `https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Messages.json`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: authHeader,
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: formParams.toString(),
+          }
+        );
+        if (twilioRes.ok) {
+          smsSent = true;
+          console.log(`📱 Twilio SMS delivered to ${cleanPhone}`);
+        }
+      } catch (smsErr) {
+        console.error('Twilio dispatch error:', smsErr);
+      }
+    }
+
+    // Mask phone number for security
+    const maskedPhone = cleanPhone.length > 6
+      ? `${cleanPhone.slice(0, 3)}****${cleanPhone.slice(-3)}`
+      : cleanPhone;
+
+    return res.json({
+      success: true,
+      message: smsSent
+        ? `A 6-digit SMS verification code has been sent to ${maskedPhone}.`
+        : `SMS verification code generated for ${maskedPhone}.`,
+      phone: cleanPhone,
+      smsSent,
+      previewOtp: otp,
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error('Error in send-phone-otp:', errorMsg);
+    return res.status(500).json({ error: 'Failed to send SMS verification code.' });
+  }
+});
+
+// 4e. Verify Mobile SMS OTP & Login / Signup
+app.post('/api/auth/verify-phone-otp', async (req, res) => {
+  try {
+    const { phone, otp, displayName } = req.body;
+
+    if (!phone || !otp) {
+      return res.status(400).json({ error: 'Mobile phone number and 6-digit SMS OTP are required.' });
+    }
+
+    const cleanPhone = cleanPhoneNumber(phone);
+    const cleanOtp = String(otp).trim();
+
+    const memoryRecord = inMemoryPhoneOtps.get(cleanPhone);
+    const isValidOtp = !!(memoryRecord && memoryRecord.otp === cleanOtp && memoryRecord.expiresAt > Date.now());
+
+    if (!isValidOtp) {
+      return res.status(400).json({ error: 'Invalid or expired SMS OTP code. Please request a new code.' });
+    }
+
+    inMemoryPhoneOtps.delete(cleanPhone);
+
+    const syntheticEmail = `${cleanPhone.replace('+', 'p')}@mobile.pokemonarena.com`;
+    const database = await getDb();
+    let existingTrainer = null;
+
+    if (database) {
+      existingTrainer = await database.collection('trainers').findOne({
+        $or: [
+          { phoneNumber: cleanPhone },
+          { email: syntheticEmail },
+        ],
+      });
+    } else {
+      for (const t of inMemoryTrainers.values()) {
+        const record = t as any;
+        if (record && (record.phoneNumber === cleanPhone || record.email === syntheticEmail)) {
+          existingTrainer = record;
+          break;
+        }
+      }
+    }
+
+    if (existingTrainer) {
+      const { password: _, ...safeAccount } = existingTrainer;
+      console.log(`📱 Trainer logged in via SMS OTP: ${cleanPhone}`);
+      return res.json({
+        success: true,
+        message: `Welcome back, Trainer ${existingTrainer.displayName}!`,
+        account: safeAccount,
+        isNewAccount: false,
+      });
+    }
+
+    // Register a new Trainer Account linked to this Mobile Number
+    const last4 = cleanPhone.slice(-4);
+    const chosenName = (displayName && String(displayName).trim()) ||
+      (memoryRecord?.displayName && String(memoryRecord.displayName).trim()) ||
+      `Trainer_${last4}`;
+    const cleanUsername = `trainer_${cleanPhone.replace(/\D/g, '').slice(-8)}`;
+
+    const newMobileAccount = {
+      id: `trainer_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+      phoneNumber: cleanPhone,
+      email: syntheticEmail,
+      username: cleanUsername,
+      pin: '1234',
+      displayName: chosenName,
+      avatarId: 25,
+      trainerAvatarId: 'red',
+      title: 'Rookie Pokémon Trainer',
+      level: 1,
+      exp: 0,
+      trophyPoints: 0,
+      unlockedAvatars: [25, 1, 4, 7],
+      unlockedTrainerAvatars: ['red', 'pikachu'],
+      unlockedSongIds: ['pallet_town'],
+      activeSongId: 'pallet_town',
+      totalGames: 0,
+      totalWins: 0,
+      totalCorrect: 0,
+      totalGuesses: 0,
+      bestStreak: 0,
+      totalScore: 0,
+      highScores: {},
+      regionalMastery: {
+        all: { correct: 0, total: 0 },
+        kanto: { correct: 0, total: 0 },
+        johto: { correct: 0, total: 0 },
+        hoenn: { correct: 0, total: 0 },
+        sinnoh: { correct: 0, total: 0 },
+        unova: { correct: 0, total: 0 },
+        kalos: { correct: 0, total: 0 },
+        alola: { correct: 0, total: 0 },
+        galar: { correct: 0, total: 0 },
+        hisui: { correct: 0, total: 0 },
+        paldea: { correct: 0, total: 0 },
+      },
+      achievements: {},
+      trophies: {},
+      dailyStreak: 1,
+      lastLoginDateIST: new Date().toISOString().split('T')[0],
+      claimedDailyStreakDays: [],
+      battleTokens: 250,
+      inventory: {},
+      claimedFreeShopItems: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (database) {
+      await database.collection('trainers').insertOne(newMobileAccount);
+    }
+    inMemoryTrainers.set(syntheticEmail, newMobileAccount);
+    inMemoryTrainers.set(cleanPhone, newMobileAccount);
+
+    console.log(`📱 New Mobile Trainer registered: ${cleanPhone} (${chosenName})`);
+
+    return res.json({
+      success: true,
+      message: `Trainer account successfully activated for ${cleanPhone}! Welcome to Pokémon Arena.`,
+      account: newMobileAccount,
+      isNewAccount: true,
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error('Error in verify-phone-otp:', errorMsg);
+    return res.status(500).json({ error: 'Failed to verify SMS verification code.' });
+  }
+});
+
 // 5. Sync Account Progress to MongoDB
 app.post('/api/account/sync', async (req, res) => {
   try {
     const { account } = req.body;
-    if (!account || !account.email) {
-      return res.status(400).json({ error: 'Account data with email required.' });
+    if (!account || (!account.email && !account.phoneNumber && !account.id)) {
+      return res.status(400).json({ error: 'Account data required.' });
     }
 
-    const normalizedEmail = String(account.email).trim().toLowerCase();
+    const normalizedEmail = account.email ? String(account.email).trim().toLowerCase() : null;
+    const cleanPhone = account.phoneNumber ? cleanPhoneNumber(account.phoneNumber) : null;
     const database = await getDb();
 
+    const updateFields = {
+      displayName: account.displayName,
+      avatarId: account.avatarId,
+      trainerAvatarId: account.trainerAvatarId,
+      title: account.title,
+      level: account.level,
+      exp: account.exp,
+      trophyPoints: account.trophyPoints,
+      battleTokens: account.battleTokens,
+      inventory: account.inventory,
+      unlockedAvatars: account.unlockedAvatars,
+      unlockedTrainerAvatars: account.unlockedTrainerAvatars,
+      unlockedSongIds: account.unlockedSongIds,
+      activeSongId: account.activeSongId,
+      totalGames: account.totalGames,
+      totalWins: account.totalWins,
+      totalCorrect: account.totalCorrect,
+      totalGuesses: account.totalGuesses,
+      bestStreak: account.bestStreak,
+      totalScore: account.totalScore,
+      highScores: account.highScores,
+      regionalMastery: account.regionalMastery,
+      achievements: account.achievements,
+      trophies: account.trophies,
+      dailyStreak: account.dailyStreak,
+      claimedFreeShopItems: account.claimedFreeShopItems,
+      claimedDailyStreakDays: account.claimedDailyStreakDays,
+      updatedAt: new Date().toISOString(),
+    };
+
     if (database) {
+      const matchQuery: Record<string, unknown> = {};
+      if (normalizedEmail && cleanPhone) {
+        matchQuery.$or = [{ email: normalizedEmail }, { phoneNumber: cleanPhone }, { id: account.id }];
+      } else if (normalizedEmail) {
+        matchQuery.$or = [{ email: normalizedEmail }, { id: account.id }];
+      } else if (cleanPhone) {
+        matchQuery.$or = [{ phoneNumber: cleanPhone }, { id: account.id }];
+      } else {
+        matchQuery.id = account.id;
+      }
+
       await database.collection('trainers').updateOne(
-        { email: normalizedEmail },
-        {
-          $set: {
-            displayName: account.displayName,
-            avatarId: account.avatarId,
-            title: account.title,
-            level: account.level,
-            exp: account.exp,
-            trophyPoints: account.trophyPoints,
-            unlockedAvatars: account.unlockedAvatars,
-            unlockedSongIds: account.unlockedSongIds,
-            activeSongId: account.activeSongId,
-            totalGames: account.totalGames,
-            totalWins: account.totalWins,
-            totalCorrect: account.totalCorrect,
-            totalGuesses: account.totalGuesses,
-            bestStreak: account.bestStreak,
-            totalScore: account.totalScore,
-            highScores: account.highScores,
-            regionalMastery: account.regionalMastery,
-            achievements: account.achievements,
-            trophies: account.trophies,
-            updatedAt: new Date().toISOString(),
-          },
-        },
+        matchQuery,
+        { $set: updateFields },
         { upsert: false }
       );
     } else {
-      const existing = inMemoryTrainers.get(normalizedEmail);
+      const key = normalizedEmail || cleanPhone || account.id;
+      const existing = inMemoryTrainers.get(key);
       if (existing) {
-        inMemoryTrainers.set(normalizedEmail, {
+        inMemoryTrainers.set(key, {
           ...existing,
           ...account,
           updatedAt: new Date().toISOString(),
@@ -799,7 +1185,7 @@ app.get('/api/trainers/lookup', async (req, res) => {
   }
 });
 
-// 6. Global Leaderboard from MongoDB (Top 100 trainers by highest ranks and trophies)
+// 6. Global Leaderboard from MongoDB (Top 100 real trainers by highest ranks and trophies)
 app.get('/api/leaderboard', async (req, res) => {
   try {
     const queryUserId = req.query.userId ? String(req.query.userId).trim() : null;
@@ -808,15 +1194,33 @@ app.get('/api/leaderboard', async (req, res) => {
 
     const database = await getDb();
     if (database) {
+      const realFilter: Record<string, unknown> = {
+        id: { $nin: Array.from(FAKE_BOT_IDS) },
+        username: { $nin: Array.from(FAKE_BOT_USERNAMES) },
+        isBot: { $ne: true },
+        isSeed: { $ne: true },
+      };
+
       const trainers = await database
         .collection('trainers')
         .find(
-          {},
+          realFilter,
           { projection: { password: 0 } }
         )
         .sort({ trophyPoints: -1, totalScore: -1, level: -1, totalWins: -1 })
         .limit(100)
         .toArray();
+
+      // Ensure no bot records slip through
+      const filteredTrainers = trainers.filter((t: any) => {
+        if (!t) return false;
+        const tid = String(t.id || '');
+        const u = String(t.username || '').toLowerCase().trim();
+        const d = String(t.displayName || '').toLowerCase().trim();
+        if (FAKE_BOT_IDS.has(tid)) return false;
+        if (FAKE_BOT_USERNAMES.has(u) || FAKE_BOT_NAMES.has(d)) return false;
+        return true;
+      });
 
       let userRank = null;
       if (queryUserId || queryEmail || queryUsername) {
@@ -836,21 +1240,24 @@ app.get('/api/leaderboard', async (req, res) => {
 
           const [trophyRankCount, levelRankCount, scoreRankCount, totalCount] = await Promise.all([
             database.collection('trainers').countDocuments({
+              ...realFilter,
               $or: [
                 { trophyPoints: { $gt: userTP } },
                 { trophyPoints: userTP, totalScore: { $gt: userScore } },
               ],
             }),
             database.collection('trainers').countDocuments({
+              ...realFilter,
               $or: [
                 { level: { $gt: userLevel } },
                 { level: userLevel, exp: { $gt: userExp } },
               ],
             }),
             database.collection('trainers').countDocuments({
+              ...realFilter,
               totalScore: { $gt: userScore },
             }),
-            database.collection('trainers').countDocuments({}),
+            database.collection('trainers').countDocuments(realFilter),
           ]);
 
           userRank = {
@@ -873,16 +1280,28 @@ app.get('/api/leaderboard', async (req, res) => {
         }
       }
 
-      return res.json({ success: true, trainers, userRank });
+      return res.json({ success: true, trainers: filteredTrainers, userRank });
     }
 
-    // In-memory fallback: all trainers sorted by highest trophies and rank
-    const allTrainersList = Array.from(inMemoryTrainers.values()).map((t: any) => {
-      const { password: _, ...safe } = t;
-      return safe;
-    });
+    // In-memory fallback: Deduplicate real trainers and strictly exclude fake/bot accounts
+    const uniqueTrainersMap = new Map<string, any>();
+    for (const t of inMemoryTrainers.values()) {
+      if (!t) continue;
+      const tid = String(t.id || '');
+      const u = String(t.username || '').toLowerCase().trim();
+      const d = String(t.displayName || '').toLowerCase().trim();
+      if (FAKE_BOT_IDS.has(tid)) continue;
+      if (FAKE_BOT_USERNAMES.has(u) || FAKE_BOT_NAMES.has(d)) continue;
+      if (t.isBot || t.isSeed) continue;
 
-    const memoryTrainers = [...allTrainersList]
+      const key = String(t.email || t.id || t.username);
+      if (!uniqueTrainersMap.has(key)) {
+        const { password: _, ...safe } = t;
+        uniqueTrainersMap.set(key, safe);
+      }
+    }
+
+    const memoryTrainers = Array.from(uniqueTrainersMap.values())
       .sort((a: any, b: any) => {
         if ((b.trophyPoints || 0) !== (a.trophyPoints || 0)) {
           return (b.trophyPoints || 0) - (a.trophyPoints || 0);
@@ -901,7 +1320,7 @@ app.get('/api/leaderboard', async (req, res) => {
         (queryUsername && t.username?.toLowerCase() === queryUsername)
       );
 
-      const byLevel = [...allTrainersList].sort((a: any, b: any) => (b.level || 1) - (a.level || 1) || (b.exp || 0) - (a.exp || 0));
+      const byLevel = [...memoryTrainers].sort((a: any, b: any) => (b.level || 1) - (a.level || 1) || (b.exp || 0) - (a.exp || 0));
       const lvlIndex = byLevel.findIndex((t: any) =>
         (queryUserId && t.id === queryUserId) ||
         (queryEmail && t.email?.toLowerCase() === queryEmail) ||
@@ -914,7 +1333,7 @@ app.get('/api/leaderboard', async (req, res) => {
           trophyRank: uIndex + 1,
           levelRank: lvlIndex !== -1 ? lvlIndex + 1 : uIndex + 1,
           scoreRank: uIndex + 1,
-          totalTrainers: memoryTrainers.length,
+          totalTrainers: Math.max(memoryTrainers.length, 1),
           trainer: uDoc,
         };
       }
@@ -935,9 +1354,9 @@ app.post('/api/highscores', async (req, res) => {
     }
 
     const cleanName = String(playerName).trim();
+    const cleanLower = cleanName.toLowerCase();
     // Block any bot seed names
-    const botNames = new Set(['cynthia', 'leon', 'steven', 'nemona', 'blue', 'lance']);
-    if (botNames.has(cleanName.toLowerCase())) {
+    if (FAKE_BOT_NAMES.has(cleanLower) || FAKE_BOT_USERNAMES.has(cleanLower)) {
       return res.status(400).json({ error: 'Bot names cannot be registered.' });
     }
 
@@ -976,7 +1395,9 @@ app.get('/api/highscores', async (req, res) => {
     if (database) {
       records = await database
         .collection('high_scores')
-        .find({})
+        .find({
+          id: { $nin: Array.from(FAKE_BOT_IDS) },
+        })
         .sort({ score: -1 })
         .limit(100)
         .toArray();
@@ -986,6 +1407,9 @@ app.get('/api/highscores', async (req, res) => {
         .collection('trainers')
         .find(
           {
+            id: { $nin: Array.from(FAKE_BOT_IDS) },
+            username: { $nin: Array.from(FAKE_BOT_USERNAMES) },
+            isBot: { $ne: true },
             $or: [
               { totalScore: { $gt: 0 } },
               { totalGames: { $gt: 0 } },
@@ -997,6 +1421,13 @@ app.get('/api/highscores', async (req, res) => {
         .toArray();
 
       for (const t of activeTrainers) {
+        const tId = String(t.id || '');
+        const tU = String(t.username || '').toLowerCase().trim();
+        const tD = String(t.displayName || '').toLowerCase().trim();
+        if (FAKE_BOT_IDS.has(tId) || FAKE_BOT_USERNAMES.has(tU) || FAKE_BOT_NAMES.has(tD)) {
+          continue;
+        }
+
         if (t.highScores && typeof t.highScores === 'object') {
           for (const [modeKey, val] of Object.entries(t.highScores)) {
             const numericVal = Number(val);
@@ -1045,9 +1476,15 @@ app.get('/api/highscores', async (req, res) => {
     }
 
     // Filter out bots and sort descending
-    const botNames = new Set(['cynthia', 'leon', 'steven', 'nemona', 'blue', 'lance']);
     const cleanRecords = records
-      .filter((r) => !botNames.has(String(r.playerName || '').toLowerCase().trim()) && Number(r.score) > 0)
+      .filter((r) => {
+        if (!r) return false;
+        const rId = String(r.id || '');
+        const rName = String(r.playerName || '').toLowerCase().trim();
+        if (FAKE_BOT_IDS.has(rId)) return false;
+        if (FAKE_BOT_NAMES.has(rName) || FAKE_BOT_USERNAMES.has(rName) || !rName) return false;
+        return Number(r.score) > 0;
+      })
       .sort((a, b) => Number(b.score) - Number(a.score));
 
     return res.json({ success: true, scores: cleanRecords.slice(0, 100) });

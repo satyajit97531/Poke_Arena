@@ -14,8 +14,23 @@ interface ScoreboardModalProps {
   account: TrainerAccount;
 }
 
-const BOT_NAMES = new Set(['cynthia', 'leon', 'steven', 'nemona', 'blue', 'lance']);
-const BOT_IDS = new Set(['1', '2', '3', '4', '5', '6']);
+const BOT_NAMES = new Set([
+  'cynthia', 'champion cynthia', 'champion_cynthia',
+  'leon', 'champion leon', 'champion_leon',
+  'steven', 'steven stone', 'steven_stone',
+  'nemona',
+  'blue', 'trainer blue', 'trainer_blue',
+  'lance', 'dragon master lance', 'dragon_master_lance',
+  'brock', 'gym leader brock', 'gym_leader_brock',
+  'misty',
+  'ash', 'ash ketchum', 'ash_ketchum',
+  'red', 'trainer red', 'trainer_red',
+]);
+const BOT_IDS = new Set([
+  'acc_blue', 'acc_cynthia', 'acc_brock', 'acc_red', 'acc_ash',
+  'acc_misty', 'acc_steven', 'acc_leon', 'acc_lance',
+  '1', '2', '3', '4', '5', '6'
+]);
 
 export const ScoreboardModal: React.FC<ScoreboardModalProps> = ({
   isOpen,
@@ -104,6 +119,12 @@ export const ScoreboardModal: React.FC<ScoreboardModalProps> = ({
 
   // Filter real trainers who have played
   const allValidTrainers = Array.from(combinedMap.values()).filter((acc) => {
+    if (!acc) return false;
+    const accId = String(acc.id || '');
+    const uName = String(acc.username || '').toLowerCase().trim();
+    const dName = String(acc.displayName || '').toLowerCase().trim();
+    if (BOT_IDS.has(accId)) return false;
+    if (BOT_NAMES.has(uName) || BOT_NAMES.has(dName)) return false;
     return (
       (acc.totalGames || 0) > 0 ||
       (acc.totalScore || 0) > 0 ||

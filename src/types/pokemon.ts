@@ -227,6 +227,7 @@ export interface TrophyMilestone {
 export interface TrainerAccount {
   id: string;
   email?: string;
+  phoneNumber?: string;
   username: string;
   pin: string;
   displayName: string;
