@@ -33,6 +33,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleMute,
   onOpenProfile,
   onOpenTrophyRoad,
+  onOpenShop,
   onOpenDailyMissions,
   onOpenJukebox,
   onOpenScoreboard,
@@ -49,10 +50,10 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="w-full border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md sticky top-0 z-40 px-3 sm:px-6 py-2.5">
       <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-3">
-        {/* Left: Brand Logo & Title */}
+        {/* Left: Brand Logo & Title + Mobile Profile Pill */}
         <div className="flex items-center justify-between w-full md:w-auto gap-3">
           <div className="flex items-center gap-2.5">
-            <div className="relative w-9 h-9 rounded-full bg-gradient-to-br from-rose-500 via-red-600 to-slate-900 border-2 border-slate-700 shadow-md shadow-rose-950/50 flex items-center justify-center overflow-hidden">
+            <div className="relative w-9 h-9 rounded-full bg-gradient-to-br from-rose-500 via-red-600 to-slate-900 border-2 border-slate-700 shadow-md shadow-rose-950/50 flex items-center justify-center overflow-hidden shrink-0">
               <div className="absolute top-0 inset-x-0 h-1/2 bg-rose-500 border-b border-slate-950"></div>
               <div className="absolute bottom-0 inset-x-0 h-1/2 bg-white"></div>
               <div className="absolute w-3 h-3 rounded-full bg-white border-2 border-slate-950 z-10 flex items-center justify-center">
@@ -81,40 +82,50 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
-          {/* Mobile Tokens & EXP Pill */}
-          <div className="flex md:hidden items-center gap-2">
-            <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-[10px] font-mono">
-              <Coins className="w-3 h-3 text-amber-400" />
-              <span className="font-bold text-amber-300">{battleTokens} BT</span>
-              <span className="text-slate-600">|</span>
-              <Zap className="w-3 h-3 text-cyan-400" />
-              <span className="text-cyan-300 font-bold">{expInfo.expToNextLevel} to Lv.{expInfo.level + 1}</span>
-            </div>
-
-            {/* Quick Profile Pill on Mobile */}
-            <button
-              onClick={() => {
-                sound.playButtonPress();
-                onOpenProfile();
-              }}
-              className="flex items-center gap-1.5 p-1 rounded-full bg-slate-900 border border-slate-800"
-            >
+          {/* Clean Mobile Profile Pill (Top Right on Mobile) */}
+          <button
+            id="header-btn-trainer-profile-mobile"
+            onClick={() => {
+              sound.playButtonPress();
+              onOpenProfile();
+            }}
+            className="flex md:hidden items-center gap-1.5 py-1 pl-1 pr-2.5 rounded-full bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 transition-all active:scale-95 text-left shrink-0 max-w-[50%]"
+            title="Trainer Profile & Pass"
+          >
+            <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-rose-500 to-amber-500 p-0.5 shadow-sm overflow-hidden flex items-center justify-center shrink-0">
               <img
                 src={avatarUrl}
                 alt="Trainer Avatar"
-                className="w-7 h-7 rounded-full object-contain bg-slate-950 p-0.5"
+                className="w-full h-full rounded-full object-contain bg-slate-950 p-0.5"
               />
-              <span className="text-xs font-bold font-display text-white pr-2">{account.displayName}</span>
-            </button>
-          </div>
+            </div>
+            <div className="flex flex-col min-w-0 leading-tight">
+              <div className="flex items-center gap-1">
+                <span className="text-xs font-bold text-white truncate max-w-[85px] xs:max-w-[120px]">
+                  {account.displayName}
+                </span>
+                <span className="text-[9px] px-1 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold shrink-0">
+                  Lv.{account.level}
+                </span>
+              </div>
+              <span className="text-[9px] font-mono text-cyan-400 leading-none mt-0.5">
+                {expInfo.expToNextLevel} to Lv.{expInfo.level + 1}
+              </span>
+            </div>
+          </button>
         </div>
 
-        {/* Center: Battle Tokens & EXP To Next Level */}
+        {/* Center: Battle Tokens & EXP To Next Level (Desktop) */}
         <div className="hidden md:flex items-center gap-3.5 bg-slate-900/90 border border-slate-800 rounded-full px-4 py-1.5 shadow-inner">
           {/* Battle Tokens Display */}
           <div
-            className="flex items-center gap-1.5"
-            title={`Battle Tokens: ${battleTokens.toLocaleString()} BT`}
+            className="flex items-center gap-1.5 cursor-pointer hover:opacity-90 transition-opacity"
+            onClick={() => {
+              sound.playButtonPress();
+              if (onOpenShop) onOpenShop();
+              else onOpenProfile();
+            }}
+            title={`Battle Tokens: ${battleTokens.toLocaleString()} BT (Click to open PokéMart)`}
           >
             <div className="w-5 h-5 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
               <Coins className="w-3 h-3 text-amber-400" />
@@ -158,16 +169,32 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Right Tools: Profile Avatar, Limitless Trophies, Jukebox BGM, Leaderboards */}
-        <div className="flex items-center justify-between w-full md:w-auto gap-2">
-          {/* Trainer Profile Card */}
+        {/* Right Tools / Mobile Second Row: Tokens, Trophies, Missions, Ranks, Jukebox, Sound */}
+        <div className="flex items-center justify-between w-full md:w-auto gap-1.5 sm:gap-2 pt-1 md:pt-0 border-t border-slate-800/60 md:border-none">
+          {/* Mobile Tokens Pill (only on mobile) */}
+          <button
+            id="header-btn-tokens-mobile"
+            onClick={() => {
+              sound.playButtonPress();
+              if (onOpenShop) onOpenShop();
+              else onOpenProfile();
+            }}
+            className="flex md:hidden items-center gap-1 px-2 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs font-semibold text-amber-300 hover:bg-slate-800 transition-all active:scale-95 cursor-pointer"
+            title="Battle Tokens (Click for PokéMart)"
+          >
+            <Coins className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span className="font-mono font-bold">{battleTokens.toLocaleString()}</span>
+            <span className="text-[10px] text-amber-400/70 font-bold">BT</span>
+          </button>
+
+          {/* Trainer Profile Card (Desktop only, since mobile has top-right card) */}
           <button
             id="header-btn-trainer-profile"
             onClick={() => {
               sound.playButtonPress();
               onOpenProfile();
             }}
-            className="flex items-center gap-2 py-1 pl-1 pr-2.5 rounded-full bg-slate-900 hover:bg-slate-800 border border-slate-700/80 transition-all hover:scale-105 active:scale-95 text-left group"
+            className="hidden md:flex items-center gap-2 py-1 pl-1 pr-2.5 rounded-full bg-slate-900 hover:bg-slate-800 border border-slate-700/80 transition-all hover:scale-105 active:scale-95 text-left group"
             title="Trainer Profile & Accounts"
           >
             <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-rose-500 to-amber-500 p-0.5 shadow-sm overflow-hidden flex items-center justify-center">
@@ -177,7 +204,7 @@ export const Header: React.FC<HeaderProps> = ({
                 className="w-full h-full rounded-full object-contain bg-slate-950 p-0.5"
               />
             </div>
-            <div className="hidden sm:block">
+            <div>
               <div className="flex items-center gap-1 leading-none">
                 <span className="text-xs font-bold text-white group-hover:text-rose-400 transition-colors">
                   {account.displayName}
@@ -200,26 +227,12 @@ export const Header: React.FC<HeaderProps> = ({
                 onOpenProfile();
               }
             }}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer"
             title="Click to redirect to 100 Lakh Trophy Road!"
           >
             <Trophy className="w-3.5 h-3.5 text-amber-400" />
             <span className="font-mono font-bold">{account.trophyPoints.toLocaleString()}</span>
             <span className="text-[10px] text-amber-400/80 font-bold hidden sm:inline">TP</span>
-          </button>
-
-          {/* BGM Chiptune Jukebox */}
-          <button
-            id="header-btn-jukebox"
-            onClick={() => {
-              sound.playButtonPress();
-              onOpenJukebox();
-            }}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-semibold transition-all hover:scale-105 active:scale-95"
-            title="Music & BGM Jukebox"
-          >
-            <Music className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="hidden sm:inline text-[11px]">BGM</span>
           </button>
 
           {/* Daily Missions Button (24h IST cycle) */}
@@ -229,7 +242,7 @@ export const Header: React.FC<HeaderProps> = ({
               sound.playButtonPress();
               if (onOpenDailyMissions) onOpenDailyMissions();
             }}
-            className="relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer"
+            className="relative flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer"
             title="Daily Missions (Resets every 24h at 12:00 AM IST)"
           >
             <Calendar className="w-3.5 h-3.5 text-emerald-400" />
@@ -248,11 +261,25 @@ export const Header: React.FC<HeaderProps> = ({
               sound.playButtonPress();
               onOpenScoreboard();
             }}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 text-xs font-semibold transition-all hover:scale-105 active:scale-95"
+            className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 text-xs font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer"
             title="Leaderboards & Career Records"
           >
             <BarChart2 className="w-3.5 h-3.5 text-purple-400" />
             <span className="hidden sm:inline text-[11px]">Ranks</span>
+          </button>
+
+          {/* BGM Chiptune Jukebox */}
+          <button
+            id="header-btn-jukebox"
+            onClick={() => {
+              sound.playButtonPress();
+              onOpenJukebox();
+            }}
+            className="flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-xs font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer"
+            title="Music & BGM Jukebox"
+          >
+            <Music className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline text-[11px]">BGM</span>
           </button>
 
           {/* Sound Toggle Button */}
@@ -262,7 +289,7 @@ export const Header: React.FC<HeaderProps> = ({
               sound.playButtonPress();
               onToggleMute();
             }}
-            className={`p-2 rounded-lg border text-xs transition-colors ${
+            className={`p-1.5 sm:p-2 rounded-lg border text-xs transition-colors cursor-pointer flex items-center justify-center ${
               isMuted
                 ? 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300'
                 : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'

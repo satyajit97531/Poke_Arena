@@ -101,7 +101,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   const [showAuthPassword, setShowAuthPassword] = useState(false);
   const [authDisplayName, setAuthDisplayName] = useState('');
   const [authOtp, setAuthOtp] = useState('');
-  const [previewOtp, setPreviewOtp] = useState<string | null>(null);
 
   const [authError, setAuthError] = useState('');
   const [authSuccess, setAuthSuccess] = useState('');
@@ -262,10 +261,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
         return;
       }
 
-      setAuthSuccess(data.message || `Verification code generated for ${cleanEmail}!`);
-      if (data.previewOtp) {
-        setPreviewOtp(data.previewOtp);
-      }
+      setAuthSuccess(data.message || `Verification code sent to ${cleanEmail}! Please check your email inbox.`);
       setSignupStep('otp');
       setResendTimer(30);
       sound.playCorrect();
@@ -1390,23 +1386,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                       <p className="text-xs text-slate-300">
                         We sent a verification code to <strong className="text-cyan-300">{authEmail}</strong>. Enter it below to complete registration:
                       </p>
-
-                      {/* Preview OTP helper if running without external SMTP server */}
-                      {previewOtp && (
-                        <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 text-xs text-cyan-300">
-                            <Radio className="w-4 h-4 animate-pulse text-cyan-400" />
-                            <span>Preview OTP: <strong className="font-mono text-sm tracking-widest text-white">{previewOtp}</strong></span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => previewOtp && setAuthOtp(previewOtp)}
-                            className="text-[11px] px-2.5 py-1 rounded bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 font-bold border border-cyan-500/40"
-                          >
-                            Auto-fill Code
-                          </button>
-                        </div>
-                      )}
 
                       <div>
                         <input
