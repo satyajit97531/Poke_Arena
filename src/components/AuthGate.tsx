@@ -15,7 +15,6 @@ import {
   Eye,
   EyeOff,
   Smartphone,
-  Radio,
   Send,
   Check,
   KeyRound,
@@ -67,7 +66,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
 
   // OTP inputs
   const [otpCode, setOtpCode] = useState('');
-  const [previewOtp, setPreviewOtp] = useState<string | null>(null);
 
   // UI States
   const [isLoading, setIsLoading] = useState(false);
@@ -160,10 +158,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
         return;
       }
 
-      setSuccessMessage(data.message || `Verification code sent to ${cleanEmail}!`);
-      if (data.previewOtp) {
-        setPreviewOtp(data.previewOtp);
-      }
+      setSuccessMessage(data.message || `Verification code sent to ${cleanEmail}! Please check your inbox.`);
       setOtpCode('');
       setEmailSignupStep('otp');
       setResendTimer(30);
@@ -286,10 +281,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
         return;
       }
 
-      setSuccessMessage(data.message || `Login verification code sent to ${cleanEmail}!`);
-      if (data.previewOtp) {
-        setPreviewOtp(data.previewOtp);
-      }
+      setSuccessMessage(data.message || `Login verification code sent to ${cleanEmail}! Please check your inbox.`);
       setOtpCode('');
       setEmailLoginStep('otp');
       setResendTimer(30);
@@ -394,9 +386,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
       }
 
       setSuccessMessage(data.message || `SMS verification code dispatched to ${fullPhone}!`);
-      if (data.previewOtp) {
-        setPreviewOtp(data.previewOtp);
-      }
       setOtpCode('');
       setMobileStep('otp');
       setResendTimer(30);
@@ -510,7 +499,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
               setAuthMethod('email');
               setError('');
               setSuccessMessage('');
-              setPreviewOtp(null);
             }}
             className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
               authMethod === 'email'
@@ -529,7 +517,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
               setAuthMethod('mobile');
               setError('');
               setSuccessMessage('');
-              setPreviewOtp(null);
             }}
             className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
               authMethod === 'mobile'
@@ -556,7 +543,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                 setEmailTouched(false);
                 setError('');
                 setSuccessMessage('');
-                setPreviewOtp(null);
               }}
               className={`py-1.5 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
                 emailTab === 'signup'
@@ -578,7 +564,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                 setEmailTouched(false);
                 setError('');
                 setSuccessMessage('');
-                setPreviewOtp(null);
               }}
               className={`py-1.5 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
                 emailTab === 'login'
@@ -629,31 +614,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
             <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400 mt-0.5" />
             <span className="flex-1">{successMessage}</span>
           </motion.div>
-        )}
-
-        {/* Preview OTP helper if running in development / simulation mode */}
-        {previewOtp && (
-          <div className="mb-4 p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-xs text-cyan-300">
-              <Radio className="w-4 h-4 animate-pulse text-cyan-400" />
-              <span>
-                Verification OTP:{' '}
-                <strong className="font-mono text-sm tracking-widest text-white">
-                  {previewOtp}
-                </strong>
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                sound.playButtonPress();
-                setOtpCode(previewOtp);
-              }}
-              className="text-[11px] px-2.5 py-1 rounded bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 font-bold border border-cyan-500/40 cursor-pointer"
-            >
-              Auto-fill Code
-            </button>
-          </div>
         )}
 
         {/* ========================================================= */}

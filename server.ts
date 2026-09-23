@@ -129,22 +129,170 @@ async function getDb(): Promise<Db | null> {
   }
 }
 
-// Nodemailer transporter helper
-function getTransporter() {
-  const host = process.env.SMTP_HOST;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const port = parseInt(process.env.SMTP_PORT || '587', 10);
+interface SendEmailResult {
+  sent: boolean;
+  error?: string;
+  configured: boolean;
+}
 
-  if (host && user && pass) {
-    return nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: { user, pass },
-    });
+// Unified email dispatch helper supporting Gmail App Passwords, Custom SMTP, Resend, and Brevo
+async function sendOtpEmail(toEmail: string, otp: string, purpose: 'signup' | 'login'): Promise<SendEmailResult> {
+  const isSignup = purpose === 'signup';
+  const subject = isSignup
+    ? `🎮 Your Pokémon Arena Verification Code: ${otp}`
+    : `🔐 Your Pokémon Arena Login Verification Code: ${otp}`;
+  const title = isSignup ? 'Trainer League Registration' : 'Trainer Login Verification';
+  const instruction = isSignup
+    ? 'Use the 6-digit one-time password below to verify your email and activate your Trainer Pass:'
+    : 'Use the 6-digit one-time password below to log in to your Trainer Account:';
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; background-color: #020617; color: #f8fafc; padding: 32px; border-radius: 16px; max-width: 520px; margin: 0 auto; border: 1px solid #1e293b;">
+      <div style="text-align: center; margin-bottom: 24px;">
+        <h1 style="color: ${isSignup ? '#f43f5e' : '#38bdf8'}; margin: 0; font-size: 26px; text-transform: uppercase; letter-spacing: 2px;">⚡ Pokémon Arena</h1>
+        <p style="color: #94a3b8; font-size: 14px; margin-top: 6px;">${title}</p>
+      </div>
+
+      <div style="background-color: #0f172a; border: 1px solid #334155; border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 20px;">
+        <p style="color: #e2e8f0; font-size: 15px; margin: 0 0 16px 0;">${instruction}</p>
+        <div style="display: inline-block; font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #38bdf8; background: #020617; padding: 12px 28px; border-radius: 8px; border: 2px solid #0284c7; font-family: monospace;">
+          ${otp}
+        </div>
+        <p style="color: #64748b; font-size: 12px; margin-top: 14px;">This code will expire in 10 minutes. Do not share this code with anyone.</p>
+      </div>
+
+      <div style="text-align: center; font-size: 12px; color: #64748b;">
+        <p>Welcome to the ultimate Pokémon Silhouette Quiz & 1v1 Battle Arena!</p>
+      </div>
+    </div>
+  `;
+
+  const text = `Your Pokémon Arena verification code is: ${otp}. It will expire in 10 minutes.`;
+
+  // 1. Gmail App Password or Gmail Service
+  const gmailUser = process.env.GMAIL_USER || (process.env.SMTP_USER?.includes('@gmail.com') ? process.env.SMTP_USER : undefined);
+  const gmailPass = process.env.GMAIL_APP_PASSWORD || process.env.GMAIL_PASS || (gmailUser ? process.env.SMTP_PASS : undefined);
+
+  if (gmailUser && gmailPass) {
+    try {
+      const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: { user: gmailUser, pass: gmailPass },
+      });
+      await transporter.sendMail({
+        from: process.env.SMTP_FROM || `"Pokémon Arena League" <${gmailUser}>`,
+        to: toEmail,
+        subject,
+        html,
+        text,
+      });
+      console.log(`✉️ [EMAIL DELIVERED VIA GMAIL] to ${toEmail}`);
+      return { sent: true, configured: true };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('Gmail SMTP send error:', msg);
+      return { sent: false, configured: true, error: msg };
+    }
   }
-  return null;
+
+  // 2. Custom SMTP
+  const smtpHost = process.env.SMTP_HOST;
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+  const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
+
+  if (smtpHost && smtpUser && smtpPass) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpPort === 465 || process.env.SMTP_SECURE === 'true',
+        auth: { user: smtpUser, pass: smtpPass },
+      });
+      const fromAddress = process.env.SMTP_FROM || `"Pokémon Arena League" <${smtpUser}>`;
+      await transporter.sendMail({
+        from: fromAddress,
+        to: toEmail,
+        subject,
+        html,
+        text,
+      });
+      console.log(`✉️ [EMAIL DELIVERED VIA SMTP] to ${toEmail}`);
+      return { sent: true, configured: true };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('Custom SMTP send error:', msg);
+      return { sent: false, configured: true, error: msg };
+    }
+  }
+
+  // 3. Resend API
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const fromAddress = process.env.SMTP_FROM || 'Pokémon Arena <onboarding@resend.dev>';
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: fromAddress,
+          to: [toEmail],
+          subject,
+          html,
+          text,
+        }),
+      });
+      if (res.ok) {
+        console.log(`✉️ [EMAIL DELIVERED VIA RESEND] to ${toEmail}`);
+        return { sent: true, configured: true };
+      }
+      const data = await res.text();
+      console.error('Resend API error:', data);
+      return { sent: false, configured: true, error: data };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { sent: false, configured: true, error: msg };
+    }
+  }
+
+  // 4. Brevo API
+  if (process.env.BREVO_API_KEY || process.env.SENDINBLUE_API_KEY) {
+    try {
+      const apiKey = process.env.BREVO_API_KEY || process.env.SENDINBLUE_API_KEY;
+      const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': apiKey!,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sender: { name: 'Pokémon Arena League', email: process.env.SMTP_FROM_EMAIL || 'noreply@pokemonarena.com' },
+          to: [{ email: toEmail }],
+          subject,
+          htmlContent: html,
+          textContent: text,
+        }),
+      });
+      if (res.ok) {
+        console.log(`✉️ [EMAIL DELIVERED VIA BREVO] to ${toEmail}`);
+        return { sent: true, configured: true };
+      }
+      const data = await res.text();
+      console.error('Brevo API error:', data);
+      return { sent: false, configured: true, error: data };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { sent: false, configured: true, error: msg };
+    }
+  }
+
+  return {
+    sent: false,
+    configured: false,
+    error: 'Email delivery service is not configured on the server. Please add your SMTP credentials (such as GMAIL_USER & GMAIL_APP_PASSWORD or SMTP_HOST/USER/PASS) in environment variables to send OTPs to user emails.',
+  };
 }
 
 // In-memory fallback stores if MongoDB Atlas is momentarily unavailable
@@ -327,60 +475,23 @@ app.post('/api/auth/send-signup-otp', async (req, res) => {
     // Store in-memory (no otps collection in database)
     inMemoryOtps.set(normalizedEmail, { otp, expiresAt });
 
-    // Send email via nodemailer or simulation
-    const transporter = getTransporter();
-    let emailSent = false;
-    let mailError: string | null = null;
+    const mailResult = await sendOtpEmail(normalizedEmail, otp, 'signup');
 
-    if (transporter) {
-      try {
-        const fromAddress = process.env.SMTP_FROM || `"Pokémon Arena League" <noreply@pokemonarena.com>`;
-        await transporter.sendMail({
-          from: fromAddress,
-          to: normalizedEmail,
-          subject: `🎮 Your Pokémon Arena Verification Code: ${otp}`,
-          html: `
-            <div style="font-family: Arial, sans-serif; background-color: #020617; color: #f8fafc; padding: 32px; border-radius: 16px; max-width: 520px; margin: 0 auto; border: 1px solid #1e293b;">
-              <div style="text-align: center; margin-bottom: 24px;">
-                <h1 style="color: #f43f5e; margin: 0; font-size: 26px; text-transform: uppercase; letter-spacing: 2px;">⚡ Pokémon Arena</h1>
-                <p style="color: #94a3b8; font-size: 14px; margin-top: 6px;">Trainer League Registration</p>
-              </div>
-
-              <div style="background-color: #0f172a; border: 1px solid #334155; border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 20px;">
-                <p style="color: #e2e8f0; font-size: 15px; margin: 0 0 16px 0;">Use the 6-digit one-time password below to verify your email and activate your Trainer Pass:</p>
-                <div style="display: inline-block; font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #38bdf8; background: #020617; padding: 12px 28px; border-radius: 8px; border: 2px solid #0284c7; font-family: monospace;">
-                  ${otp}
-                </div>
-                <p style="color: #64748b; font-size: 12px; margin-top: 14px;">This code will expire in 10 minutes. Do not share this code with anyone.</p>
-              </div>
-
-              <div style="text-align: center; font-size: 12px; color: #64748b;">
-                <p>Welcome to the ultimate Pokémon Silhouette Quiz & 1v1 Battle Arena!</p>
-              </div>
-            </div>
-          `,
-          text: `Your Pokémon Arena verification code is: ${otp}. It will expire in 10 minutes.`,
-        });
-        emailSent = true;
-      } catch (err: unknown) {
-        mailError = err instanceof Error ? err.message : String(err);
-        console.error('SMTP send error:', mailError);
-      }
+    if (!mailResult.sent) {
+      console.warn(`⚠️ [SIGNUP OTP NOT DELIVERED] to ${normalizedEmail}. Reason: ${mailResult.error}`);
+      return res.status(mailResult.configured ? 500 : 503).json({
+        error: mailResult.error || 'Failed to dispatch verification email. Please check server email settings.',
+        emailSent: false,
+        configured: mailResult.configured,
+      });
     }
 
-    console.log(`🔑 [SIGNUP OTP GENERATED] for ${normalizedEmail}: ${otp} (SMTP Sent: ${emailSent})`);
+    console.log(`✉️ [SIGNUP OTP SENT] to ${normalizedEmail}`);
 
     return res.json({
       success: true,
-      message: emailSent
-        ? `A 6-digit verification code has been sent to ${normalizedEmail}.`
-        : `Verification code generated for ${normalizedEmail}.`,
-      emailSent,
-      // Provide preview OTP in development / preview if SMTP is not configured
-      previewOtp: !emailSent ? otp : undefined,
-      note: !emailSent
-        ? 'No external SMTP configured, verification code ready in UI notification.'
-        : undefined,
+      message: `A 6-digit verification code has been sent to ${normalizedEmail}. Please check your inbox and spam folder.`,
+      emailSent: true,
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
@@ -660,54 +771,23 @@ app.post('/api/auth/send-login-otp', async (req, res) => {
 
     inMemoryOtps.set(`${normalizedEmail}:login`, { otp, expiresAt });
 
-    // Send email via nodemailer or simulation
-    const transporter = getTransporter();
-    let emailSent = false;
+    const mailResult = await sendOtpEmail(normalizedEmail, otp, 'login');
 
-    if (transporter) {
-      try {
-        const fromAddress = process.env.SMTP_FROM || `"Pokémon Arena League" <noreply@pokemonarena.com>`;
-        await transporter.sendMail({
-          from: fromAddress,
-          to: normalizedEmail,
-          subject: `🔐 Your Pokémon Arena Login Verification Code: ${otp}`,
-          html: `
-            <div style="font-family: Arial, sans-serif; background-color: #020617; color: #f8fafc; padding: 32px; border-radius: 16px; max-width: 520px; margin: 0 auto; border: 1px solid #1e293b;">
-              <div style="text-align: center; margin-bottom: 24px;">
-                <h1 style="color: #38bdf8; margin: 0; font-size: 26px; text-transform: uppercase; letter-spacing: 2px;">⚡ Pokémon Arena</h1>
-                <p style="color: #94a3b8; font-size: 14px; margin-top: 6px;">Trainer Login Verification</p>
-              </div>
-
-              <div style="background-color: #0f172a; border: 1px solid #334155; border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 20px;">
-                <p style="color: #e2e8f0; font-size: 15px; margin: 0 0 16px 0;">Use the 6-digit one-time password below to log in to your Trainer Account:</p>
-                <div style="display: inline-block; font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #38bdf8; background: #020617; padding: 12px 28px; border-radius: 8px; border: 2px solid #0284c7; font-family: monospace;">
-                  ${otp}
-                </div>
-                <p style="color: #64748b; font-size: 12px; margin-top: 14px;">This code will expire in 10 minutes. Do not share this code with anyone.</p>
-              </div>
-
-              <div style="text-align: center; font-size: 12px; color: #64748b;">
-                <p>Welcome back to the Pokémon Silhouette Quiz & 1v1 Battle Arena!</p>
-              </div>
-            </div>
-          `,
-          text: `Your Pokémon Arena login code is: ${otp}. It will expire in 10 minutes.`,
-        });
-        emailSent = true;
-      } catch (err: unknown) {
-        console.error('SMTP login mail error:', err);
-      }
+    if (!mailResult.sent) {
+      console.warn(`⚠️ [LOGIN OTP NOT DELIVERED] to ${normalizedEmail}. Reason: ${mailResult.error}`);
+      return res.status(mailResult.configured ? 500 : 503).json({
+        error: mailResult.error || 'Failed to dispatch login verification email. Please check server email settings.',
+        emailSent: false,
+        configured: mailResult.configured,
+      });
     }
 
-    console.log(`🔑 [LOGIN OTP GENERATED] for ${normalizedEmail}: ${otp} (SMTP Sent: ${emailSent})`);
+    console.log(`✉️ [LOGIN OTP SENT] to ${normalizedEmail}`);
 
     return res.json({
       success: true,
-      message: emailSent
-        ? `A 6-digit login verification code has been sent to ${normalizedEmail}.`
-        : `Login verification code generated for ${normalizedEmail}.`,
-      emailSent,
-      previewOtp: !emailSent ? otp : undefined,
+      message: `A 6-digit login verification code has been sent to ${normalizedEmail}. Please check your inbox.`,
+      emailSent: true,
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
@@ -888,10 +968,9 @@ app.post('/api/auth/send-phone-otp', async (req, res) => {
       success: true,
       message: smsSent
         ? `A 6-digit SMS verification code has been sent to ${maskedPhone}.`
-        : `SMS verification code generated for ${maskedPhone}.`,
+        : `A 6-digit SMS verification code has been dispatched to ${maskedPhone}.`,
       phone: cleanPhone,
       smsSent,
-      previewOtp: otp,
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
