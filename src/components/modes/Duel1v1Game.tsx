@@ -28,9 +28,13 @@ import {
   Share2,
   Skull,
   Search,
+  Scissors,
+  Target,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { BattleRecord, GameDifficulty, RegionId } from '../../types/pokemon';
+import { BattleRecord, GameDifficulty, RegionId, ShadowCropType, Pokemon, PokemonType } from '../../types/pokemon';
+import { getExtremeClues } from '../../utils/extremeClues';
+import { POKEMON_TYPES } from '../../utils/pokemonTypes';
 import { sound } from '../../utils/audio';
 
 interface Duel1v1GameProps {
@@ -65,6 +69,7 @@ interface DuelQuestion {
   artwork: string;
   options: Array<{ id: number; displayName: string; types: string[] }>;
   correctOptionId: number;
+  shadowCrop?: ShadowCropType;
 }
 
 interface DuelRoomState {
@@ -392,6 +397,12 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
     e.preventDefault();
     if (!typedGuess.trim() || hasAnsweredThisRound || isReveal || !curQ) return;
     const clean = typedGuess.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+    const targetClean = curQ.displayName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const targetNameClean = (curQ.targetName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (clean === targetClean || clean === targetNameClean) {
+      handleSelectAnswer(curQ.correctOptionId);
+      return;
+    }
     const matched = curQ.options.find(
       (o) =>
         o.displayName.toLowerCase().replace(/[^a-z0-9]/g, '') === clean ||
@@ -526,16 +537,19 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
                   onChange={(e) => {
                     const d = e.target.value as GameDifficulty;
                     setDifficulty(d);
+                    if (d === 'easy') setTimeLimit(15);
+                    if (d === 'medium') setTimeLimit(12);
+                    if (d === 'hard') setTimeLimit(8);
                     if (d === 'extreme') setTimeLimit(30);
                     if (d === 'menacing') setTimeLimit(60);
                   }}
                   className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl p-2.5 outline-none focus:border-amber-500"
                 >
-                  <option value="easy">Easy (15s)</option>
-                  <option value="medium">Medium (12s)</option>
-                  <option value="hard">Hard (8s)</option>
-                  <option value="extreme">Extreme (30s - 4 Options & Classified Dossier)</option>
-                  <option value="menacing">Menacing (60s - Manual Typing & Classified Dossier)</option>
+                  <option value="easy">Easy (Full Silhouette - 15s)</option>
+                  <option value="medium">Medium (Half Slice & 4 Options - 12s)</option>
+                  <option value="hard">Hard (Body Part Zoom & 4 Options - 8s)</option>
+                  <option value="extreme">Extreme (Classified Dossier & 4 Options - 30s)</option>
+                  <option value="menacing">Menacing (Classified Dossier & Manual Typing - 60s)</option>
                 </select>
               </div>
 
@@ -642,14 +656,17 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
                   onChange={(e) => {
                     const d = e.target.value as GameDifficulty;
                     setDifficulty(d);
+                    if (d === 'easy') setTimeLimit(15);
+                    if (d === 'medium') setTimeLimit(12);
+                    if (d === 'hard') setTimeLimit(8);
                     if (d === 'extreme') setTimeLimit(30);
                     if (d === 'menacing') setTimeLimit(60);
                   }}
                   className="w-full bg-slate-950 border border-slate-700 text-white text-xs rounded-xl p-2.5 outline-none focus:border-amber-500"
                 >
-                  <option value="easy">Easy (Classic Options - 15s)</option>
-                  <option value="medium">Medium (Close Decoys - 12s)</option>
-                  <option value="hard">Hard (Fast Pace - 8s)</option>
+                  <option value="easy">Easy (Full Silhouette - 15s)</option>
+                  <option value="medium">Medium (Half Slice & 4 Options - 12s)</option>
+                  <option value="hard">Hard (Body Part Zoom & 4 Options - 8s)</option>
                   <option value="extreme">Extreme (Classified Dossier & 4 Options - 30s)</option>
                   <option value="menacing">Menacing (Classified Dossier & Manual Typing - 60s)</option>
                 </select>
@@ -911,7 +928,61 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
   const myPlayer = isHost ? room.host : room.guest;
   const rivalPlayer = isHost ? room.guest : room.host;
   const myAnswer = myPlayerId ? room.roundAnswers[myPlayerId] : null;
-  const isReveal = room.status === 'round_reveal';
+  const isReveal = room.status === 'round_reveal' || room.status === 'finished';
+
+  // Determine shadowCrop based on question or deterministic fallback
+  const shadowCrop: ShadowCropType = curQ?.shadowCrop || (
+    room.difficulty === 'medium'
+      ? ((curQ?.targetId || 1) % 2 === 0 ? 'upper' : 'lower')
+      : room.difficulty === 'hard'
+      ? (['head', 'tail', 'arm', 'leg'] as const)[(curQ?.targetId || 1) % 4]
+      : 'full'
+  );
+
+  let clipStyle: React.CSSProperties = {};
+  let transformStyle: React.CSSProperties = {};
+
+  if (!isReveal) {
+    if (room.difficulty === 'medium') {
+      if (shadowCrop === 'upper') {
+        clipStyle = { clipPath: 'polygon(0% 0%, 100% 0%, 100% 50%, 0% 50%)' };
+      } else {
+        clipStyle = { clipPath: 'polygon(0% 50%, 100% 50%, 100% 100%, 0% 100%)' };
+      }
+    } else if (room.difficulty === 'hard') {
+      if (shadowCrop === 'head') {
+        transformStyle = { transform: 'scale(2.6)', transformOrigin: '50% 15%' };
+      } else if (shadowCrop === 'tail') {
+        transformStyle = { transform: 'scale(2.6)', transformOrigin: '82% 75%' };
+      } else if (shadowCrop === 'arm') {
+        transformStyle = { transform: 'scale(2.6)', transformOrigin: '18% 48%' };
+      } else if (shadowCrop === 'leg') {
+        transformStyle = { transform: 'scale(2.6)', transformOrigin: '50% 88%' };
+      } else {
+        transformStyle = { transform: 'scale(2.4)', transformOrigin: '50% 30%' };
+      }
+    }
+  }
+
+  const curPokemon: Pokemon | null = curQ
+    ? {
+        id: curQ.targetId,
+        name: curQ.targetName || curQ.displayName.toLowerCase().replace(/[^a-z0-9]/g, ''),
+        displayName: curQ.displayName,
+        types: (curQ.types || ['normal']) as PokemonType[],
+        generation: 1,
+        region: (room.region && room.region !== 'all' ? room.region : 'kanto') as RegionId,
+        species: curQ.species || 'Pokémon',
+        height: curQ.height || 10,
+        weight: curQ.weight || 100,
+        stats: { hp: 50, attack: 50, defense: 50, spAtk: 50, spDef: 50, speed: 50 },
+        artwork: curQ.artwork,
+        silhouette: curQ.artwork,
+        flavorText: curQ.species,
+      }
+    : null;
+
+  const extremeClues = curPokemon ? getExtremeClues(curPokemon) : null;
 
   return (
     <div className="w-full max-w-4xl mx-auto space-y-4 p-3 sm:p-5 select-none">
@@ -1011,87 +1082,243 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
       </AnimatePresence>
 
       {/* Main Question Stage */}
-      <div className="p-6 rounded-3xl bg-slate-900/90 border border-slate-800 text-center space-y-5 shadow-2xl relative">
-        {/* Silhouette or Revealed Pokémon */}
-        <div className="relative w-48 h-48 sm:w-56 sm:h-56 mx-auto flex items-center justify-center">
-          <img
-            src={curQ.artwork}
-            alt={curQ.displayName}
-            className={`w-full h-full object-contain transition-all duration-500 ${
-              isReveal ? 'brightness-100 drop-shadow-2xl scale-105' : 'brightness-0 contrast-200 opacity-90'
-            }`}
-          />
-
-          {isReveal && (
-            <motion.div
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              className="absolute -bottom-2 px-4 py-1 rounded-full bg-slate-950/90 border border-amber-500/40 text-amber-300 font-display font-extrabold text-sm sm:text-base shadow-xl"
-            >
-              #{curQ.targetId} {curQ.displayName}
-            </motion.div>
-          )}
-        </div>
-
-        {/* Clues */}
-        <div className="flex items-center justify-center gap-2 flex-wrap text-xs">
-          {room.difficulty !== 'menacing' && curQ.types.map((t) => (
-            <span
-              key={t}
-              className="px-3 py-1 rounded-full bg-slate-800 text-slate-200 border border-slate-700 capitalize font-medium"
-            >
-              {t} Type
-            </span>
-          ))}
-          <span className="px-3 py-1 rounded-full bg-slate-800/80 text-slate-400 border border-slate-700">
-            {curQ.species}
+      <div className="p-4 sm:p-6 rounded-3xl bg-slate-900/90 border border-slate-800 text-center space-y-4 shadow-2xl relative">
+        {/* Difficulty Badge & Dex Indicator */}
+        <div className="flex items-center justify-between px-1">
+          <div className="flex items-center gap-2">
+            {room.difficulty === 'easy' && (
+              <span className="text-[10px] uppercase tracking-wider font-bold px-2.5 py-1 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                <span>Easy (Full Silhouette)</span>
+              </span>
+            )}
+            {room.difficulty === 'medium' && (
+              <span className="text-[10px] uppercase tracking-wider font-bold px-2.5 py-1 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                <Scissors className="w-3 h-3" />
+                <span>Medium ({shadowCrop === 'upper' ? 'Upper Body Slice' : 'Lower Body Slice'})</span>
+              </span>
+            )}
+            {room.difficulty === 'hard' && (
+              <span className="text-[10px] uppercase tracking-wider font-bold px-2.5 py-1 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1">
+                <Target className="w-3 h-3 text-rose-400" />
+                <span>Hard ({shadowCrop.toUpperCase()} Target Reticle)</span>
+              </span>
+            )}
+            {room.difficulty === 'extreme' && (
+              <span className="text-[10px] uppercase tracking-wider font-bold px-2.5 py-1 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1">
+                <Skull className="w-3 h-3 text-purple-400" />
+                <span>Extreme (Classified Dossier & 4 Options)</span>
+              </span>
+            )}
+            {room.difficulty === 'menacing' && (
+              <span className="text-[10px] uppercase tracking-wider font-bold px-2.5 py-1 rounded-md bg-red-500/20 text-red-300 border border-red-500/30 flex items-center gap-1">
+                <Flame className="w-3.5 h-3.5 text-red-400" />
+                <span>Menacing (Classified Dossier & Manual Typing)</span>
+              </span>
+            )}
+          </div>
+          <span className="text-xs font-mono font-medium px-2.5 py-1 rounded-full bg-slate-950 border border-slate-800 text-slate-400">
+            {isReveal ? `#${String(curQ.targetId).padStart(4, '0')}` : 'National Dex ???'}
           </span>
         </div>
 
-        {/* Classified Dossier for Extreme / Menacing */}
-        {(room.difficulty === 'extreme' || room.difficulty === 'menacing') && (
+        {/* Central Display Arena */}
+        <div className="relative w-full max-w-xl aspect-[4/3] max-h-[320px] sm:max-h-[360px] rounded-2xl bg-gradient-to-b from-slate-950/90 via-slate-900 to-slate-950/90 border border-slate-800 shadow-2xl flex flex-col items-center justify-center p-3 sm:p-5 overflow-hidden mx-auto">
+          {/* Ambient Glow */}
           <div
-            className={`p-3.5 rounded-2xl border text-xs max-w-lg mx-auto ${
-              room.difficulty === 'menacing'
-                ? 'bg-red-950/40 border-red-500/40 text-red-200'
-                : 'bg-purple-950/40 border-purple-500/40 text-purple-200'
-            }`}
-          >
-            <div className="flex items-center justify-between gap-2 mb-2 pb-2 border-b border-white/10">
-              <span className="flex items-center gap-1.5 font-mono font-black uppercase text-[11px] tracking-wider">
-                {room.difficulty === 'menacing' ? (
-                  <>
-                    <Skull className="w-3.5 h-3.5 text-red-400" />
-                    <span className="text-red-400">Classified Dossier // Menacing Protocol</span>
-                  </>
-                ) : (
-                  <>
-                    <Flame className="w-3.5 h-3.5 text-purple-400" />
-                    <span className="text-purple-400">Classified Dossier // Extreme Protocol</span>
-                  </>
-                )}
-              </span>
-              <span className="px-2 py-0.5 rounded bg-black/40 text-[10px] font-mono">30s Limit</span>
-            </div>
+            className="absolute inset-0 pointer-events-none opacity-20 transition-all duration-700"
+            style={{
+              background: `radial-gradient(circle at 50% 50%, #f59e0b 0%, transparent 70%)`,
+            }}
+          />
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-left text-[11px]">
-              <div className="bg-black/30 p-2 rounded-xl">
-                <span className="text-slate-400 block text-[9px] uppercase font-bold">Category</span>
-                <span className="font-semibold">{curQ.species || 'Unknown'}</span>
-              </div>
-              <div className="bg-black/30 p-2 rounded-xl">
-                <span className="text-slate-400 block text-[9px] uppercase font-bold">Height / Weight</span>
-                <span className="font-semibold">
-                  {(curQ.height / 10).toFixed(1)}m / {(curQ.weight / 10).toFixed(1)}kg
-                </span>
-              </div>
-              {room.difficulty !== 'menacing' && (
-                <div className="bg-black/30 p-2 rounded-xl col-span-2 sm:col-span-1">
-                  <span className="text-slate-400 block text-[9px] uppercase font-bold">Primary Type</span>
-                  <span className="font-semibold capitalize">{curQ.types.join(' / ')}</span>
+          {!isReveal && (room.difficulty === 'extreme' || room.difficulty === 'menacing') ? (
+            /* Classified Dossier for Extreme / Menacing (No silhouette shown) */
+            <div className="relative z-10 w-full h-full flex flex-col items-center justify-center p-2 sm:p-3 text-center">
+              {room.difficulty === 'menacing' ? (
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-500/20 border border-red-500/40 text-red-300 text-xs font-bold font-display uppercase tracking-wider mb-2">
+                  <Flame className="w-3.5 h-3.5 text-red-400" />
+                  <span>Menacing Classified Dossier</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-300 text-xs font-bold font-display uppercase tracking-wider mb-2">
+                  <Skull className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Extreme Classified Dossier</span>
                 </div>
               )}
+
+              {extremeClues && (
+                <div
+                  className={`w-full max-w-sm bg-slate-950/90 border ${
+                    room.difficulty === 'menacing' ? 'border-red-500/30' : 'border-purple-500/30'
+                  } rounded-xl p-3 shadow-inner grid grid-cols-2 gap-2 text-left text-xs`}
+                >
+                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                    <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
+                      Body Color
+                    </span>
+                    <span
+                      className={`${
+                        room.difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'
+                      } font-semibold text-xs leading-tight`}
+                    >
+                      {extremeClues.bodyColor}
+                    </span>
+                  </div>
+                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                    <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
+                      Has Wings?
+                    </span>
+                    <span
+                      className={`${
+                        room.difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'
+                      } font-semibold text-xs leading-tight`}
+                    >
+                      {extremeClues.hasWings}
+                    </span>
+                  </div>
+                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                    <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
+                      Body Stance
+                    </span>
+                    <span
+                      className={`${
+                        room.difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'
+                      } font-semibold text-xs leading-tight`}
+                    >
+                      {extremeClues.bodyStance}
+                    </span>
+                  </div>
+                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                    <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
+                      Tail Feature
+                    </span>
+                    <span
+                      className={`${
+                        room.difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'
+                      } font-semibold text-xs leading-tight`}
+                    >
+                      {extremeClues.hasTail}
+                    </span>
+                  </div>
+                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                    <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
+                      Weight Tier
+                    </span>
+                    <span
+                      className={`${
+                        room.difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'
+                      } font-semibold text-xs leading-tight`}
+                    >
+                      {extremeClues.weightClass}
+                    </span>
+                  </div>
+                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                    <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
+                      Height Tier
+                    </span>
+                    <span
+                      className={`${
+                        room.difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'
+                      } font-semibold text-xs leading-tight`}
+                    >
+                      {extremeClues.heightClass}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <p
+                className={`text-[11px] ${
+                  room.difficulty === 'menacing' ? 'text-red-300/80' : 'text-purple-300/80'
+                } mt-2 font-medium`}
+              >
+                {room.difficulty === 'menacing'
+                  ? 'Zero options provided! Type the exact Pokémon name below.'
+                  : 'Classified dossier clues revealed! Choose from 4 options below.'}
+              </p>
             </div>
+          ) : (
+            /* Silhouette / Revealed Pokémon Stage */
+            <div
+              className="w-full h-full flex items-center justify-center transition-all duration-500 overflow-hidden"
+              style={!isReveal ? { ...clipStyle, ...transformStyle } : {}}
+            >
+              <motion.img
+                key={curQ.targetId}
+                src={curQ.artwork}
+                alt={isReveal ? curQ.displayName : 'Mystery Pokémon Silhouette'}
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{
+                  scale: isReveal ? [1, 1.06, 1] : 1,
+                  opacity: 1,
+                }}
+                transition={{ duration: 0.4 }}
+                className={`max-h-[220px] sm:max-h-[260px] w-auto max-w-[85%] object-contain select-none drop-shadow-2xl ${
+                  isReveal
+                    ? 'brightness-100 drop-shadow-2xl scale-105'
+                    : 'brightness-0 contrast-200 opacity-90'
+                }`}
+              />
+            </div>
+          )}
+
+          {/* Medium Cut Indicator Line */}
+          {!isReveal && room.difficulty === 'medium' && (
+            <div className="absolute inset-x-4 top-1/2 -translate-y-1/2 border-b border-dashed border-amber-400/40 pointer-events-none flex items-center justify-center z-10">
+              <span className="text-[9px] uppercase tracking-widest text-amber-300/80 bg-slate-950/80 px-2 py-0.5 rounded-full border border-amber-500/30">
+                {shadowCrop === 'upper' ? '▲ Upper Body Slice' : '▼ Lower Body Slice'}
+              </span>
+            </div>
+          )}
+
+          {/* Hard Mode Target Reticle */}
+          {!isReveal && room.difficulty === 'hard' && (
+            <div className="absolute inset-0 pointer-events-none border border-rose-500/20 rounded-xl m-2 flex items-center justify-center z-10">
+              <div className="text-[9px] uppercase tracking-widest text-rose-400/90 font-bold bg-slate-950/90 px-2.5 py-1 rounded-full border border-rose-500/40 shadow-md">
+                Hard Mode: {shadowCrop.toUpperCase()} Target Reticle
+              </div>
+            </div>
+          )}
+
+          {/* Revealed Name & Species Overlay */}
+          <AnimatePresence>
+            {isReveal && (
+              <motion.div
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="absolute bottom-3 inset-x-4 z-20 flex flex-col items-center text-center bg-slate-950/85 backdrop-blur-md border border-slate-800/80 rounded-xl py-2 px-3 shadow-lg"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono font-bold text-amber-400">
+                    #{String(curQ.targetId).padStart(4, '0')}
+                  </span>
+                  <h2 className="text-xl sm:text-2xl font-black font-display tracking-tight text-white capitalize">
+                    {curQ.displayName}
+                  </h2>
+                </div>
+                <p className="text-xs text-slate-400 line-clamp-1 max-w-md">
+                  {curQ.species}
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* Clues (Types & Species) - Hidden in Extreme / Menacing until Reveal */}
+        {(isReveal || (room.difficulty !== 'extreme' && room.difficulty !== 'menacing')) && (
+          <div className="flex items-center justify-center gap-2 flex-wrap text-xs">
+            {curQ.types.map((t) => (
+              <span
+                key={t}
+                className="px-3 py-1 rounded-full bg-slate-800 text-slate-200 border border-slate-700 capitalize font-medium"
+              >
+                {t} Type
+              </span>
+            ))}
+            <span className="px-3 py-1 rounded-full bg-slate-800/80 text-slate-400 border border-slate-700">
+              {curQ.species}
+            </span>
           </div>
         )}
 

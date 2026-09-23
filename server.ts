@@ -1666,6 +1666,7 @@ interface DuelQuestion {
   artwork: string;
   options: Array<{ id: number; displayName: string; types: string[] }>;
   correctOptionId: number;
+  shadowCrop?: 'full' | 'upper' | 'lower' | 'head' | 'tail' | 'arm' | 'leg';
 }
 
 interface DuelRoomState {
@@ -1733,7 +1734,7 @@ function getAllPokemonData(): any[] {
   }
 }
 
-function generateQuestionsForRoom(rounds: number, region: string): DuelQuestion[] {
+function generateQuestionsForRoom(rounds: number, region: string, difficulty: string = 'easy'): DuelQuestion[] {
   const allPoke = getAllPokemonData();
   let pool = allPoke;
   if (region && region !== 'all') {
@@ -1766,6 +1767,14 @@ function generateQuestionsForRoom(rounds: number, region: string): DuelQuestion[
       types: opt.types || ['normal'],
     }));
 
+    let shadowCrop: 'full' | 'upper' | 'lower' | 'head' | 'tail' | 'arm' | 'leg' = 'full';
+    if (difficulty === 'medium') {
+      shadowCrop = Math.random() < 0.5 ? 'upper' : 'lower';
+    } else if (difficulty === 'hard') {
+      const parts: ('head' | 'tail' | 'arm' | 'leg')[] = ['head', 'tail', 'arm', 'leg'];
+      shadowCrop = parts[Math.floor(Math.random() * parts.length)];
+    }
+
     questions.push({
       targetId: target.id,
       targetName: target.name,
@@ -1778,6 +1787,7 @@ function generateQuestionsForRoom(rounds: number, region: string): DuelQuestion[
       artwork: `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${target.id}.png`,
       options: allOptions,
       correctOptionId: target.id,
+      shadowCrop,
     });
   }
 
@@ -1791,7 +1801,17 @@ app.post('/api/duel/create', (req, res) => {
     const playerId = `p1_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const roomCode = `PKMN-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    const questions = generateQuestionsForRoom(Number(rounds) || 5, region);
+    const questions = generateQuestionsForRoom(Number(rounds) || 5, region, String(difficulty));
+    const activeTimeLimit =
+      difficulty === 'menacing'
+        ? 60
+        : difficulty === 'extreme'
+        ? 30
+        : difficulty === 'hard'
+        ? 8
+        : difficulty === 'medium'
+        ? 12
+        : Number(timeLimit) || 15;
 
     const room: DuelRoomState = {
       code: roomCode,
@@ -1807,7 +1827,7 @@ app.post('/api/duel/create', (req, res) => {
       },
       guest: null,
       rounds: Number(rounds) || 5,
-      timeLimit: (difficulty === 'extreme' || difficulty === 'menacing') ? 30 : (Number(timeLimit) || 15),
+      timeLimit: activeTimeLimit,
       difficulty: difficulty || 'easy',
       region: region || 'all',
       status: 'waiting',
@@ -1932,7 +1952,7 @@ app.post('/api/duel/random-match', (req, res) => {
 
     // No waiting player found: create new room and wait in queue
     const roomCode = `RAND-${Math.floor(1000 + Math.random() * 9000)}`;
-    const questions = generateQuestionsForRoom(5, region);
+    const questions = generateQuestionsForRoom(5, region, String(difficulty));
 
     const room: DuelRoomState = {
       code: roomCode,
@@ -1948,7 +1968,16 @@ app.post('/api/duel/random-match', (req, res) => {
       },
       guest: null,
       rounds: 5,
-      timeLimit: (difficulty === 'extreme' || difficulty === 'menacing') ? 30 : difficulty === 'hard' ? 8 : difficulty === 'medium' ? 12 : 15,
+      timeLimit:
+        difficulty === 'menacing'
+          ? 60
+          : difficulty === 'extreme'
+          ? 30
+          : difficulty === 'hard'
+          ? 8
+          : difficulty === 'medium'
+          ? 12
+          : 15,
       difficulty,
       region,
       status: 'waiting',
