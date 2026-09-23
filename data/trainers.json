@@ -1,0 +1,80 @@
+[
+  {
+    "id": "trainer_1790184739710_3l62t9",
+    "email": "ashketchum123@example.com",
+    "username": "ash_k",
+    "displayName": "Ash K",
+    "password": "testpassword123",
+    "avatarId": 25,
+    "title": "Rookie Trainer",
+    "level": 1,
+    "exp": 0,
+    "trophyPoints": 0,
+    "unlockedAvatars": [
+      25,
+      1,
+      4,
+      7
+    ],
+    "unlockedSongIds": [
+      "pallet_town"
+    ],
+    "activeSongId": "pallet_town",
+    "totalGames": 0,
+    "totalWins": 0,
+    "totalCorrect": 0,
+    "totalGuesses": 0,
+    "bestStreak": 0,
+    "totalScore": 0,
+    "highScores": {},
+    "regionalMastery": {
+      "all": {
+        "correct": 0,
+        "total": 0
+      },
+      "kanto": {
+        "correct": 0,
+        "total": 0
+      },
+      "johto": {
+        "correct": 0,
+        "total": 0
+      },
+      "hoenn": {
+        "correct": 0,
+        "total": 0
+      },
+      "sinnoh": {
+        "correct": 0,
+        "total": 0
+      },
+      "unova": {
+        "correct": 0,
+        "total": 0
+      },
+      "kalos": {
+        "correct": 0,
+        "total": 0
+      },
+      "alola": {
+        "correct": 0,
+        "total": 0
+      },
+      "galar": {
+        "correct": 0,
+        "total": 0
+      },
+      "hisui": {
+        "correct": 0,
+        "total": 0
+      },
+      "paldea": {
+        "correct": 0,
+        "total": 0
+      }
+    },
+    "achievements": {},
+    "trophies": {},
+    "createdAt": "2026-09-23T17:32:19.710Z"
+  }
+]

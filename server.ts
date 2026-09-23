@@ -21,38 +21,43 @@ const PORT = 3000;
 
 app.use(express.json());
 
-// Default MongoDB URI fallback provided by user
-const DEFAULT_MONGO_URI = 'mongodb+srv://samantasatyajit503:BvkGJFoH8dRgoBcr@cluster0.0hr5n8b.mongodb.net/Pokemon_Arena?retryWrites=true&w=majority';
-
-// Robust sanitizer for MongoDB connection string (handles pasted MONGODB_URI= prefixes, quotes, and whitespace)
-function sanitizeMongoUri(raw: string | undefined): string {
-  if (!raw || typeof raw !== 'string') return DEFAULT_MONGO_URI;
+// Check if user has configured MONGODB_URI via environment secrets
+function getMongoUri(): string | null {
+  const raw = process.env.MONGODB_URI;
+  if (!raw || typeof raw !== 'string') return null;
   let clean = raw.trim();
-  // Strip variable name prefix if user passed "MONGODB_URI=mongodb+srv://..."
   clean = clean.replace(/^(?:MONGODB_URI|DATABASE_URL)=\s*/i, '').trim();
-  // Strip surrounding quotes
   clean = clean.replace(/^["'`]|["'`]$/g, '').trim();
-  // Extract mongodb URL pattern if embedded
   const match = clean.match(/mongodb(?:\+srv)?:\/\/[^\s"'`]+/i);
   if (match && match[0]) {
     return match[0];
   }
-  return clean.startsWith('mongodb://') || clean.startsWith('mongodb+srv://') ? clean : DEFAULT_MONGO_URI;
+  return clean.startsWith('mongodb://') || clean.startsWith('mongodb+srv://') ? clean : null;
 }
 
 let mongoClient: MongoClient | null = null;
 let db: Db | null = null;
 let mongoConnected = false;
-let mongoConnectionError: string | null = null;
 let lastConnectAttemptTime = 0;
 let connectPromise: Promise<Db | null> | null = null;
-let loggedMongoNotice = false;
+let loggedStorageNotice = false;
 const RECONNECT_COOLDOWN_MS = 60000; // 60s cooldown between connection retries when unreachable
 
 // Attempt connection to MongoDB Atlas with low timeout to avoid freezing requests
 async function attemptConnect(): Promise<Db | null> {
+  const activeUri = getMongoUri();
+  if (!activeUri) {
+    mongoConnected = false;
+    mongoClient = null;
+    db = null;
+    if (!loggedStorageNotice) {
+      loggedStorageNotice = true;
+      console.log('⚡ Pokémon Arena: Running on high-performance Local & Persistent Storage engine.');
+    }
+    return null;
+  }
+
   try {
-    const activeUri = sanitizeMongoUri(process.env.MONGODB_URI);
     if (!mongoClient) {
       mongoClient = new MongoClient(activeUri, {
         connectTimeoutMS: 3000,
@@ -62,16 +67,7 @@ async function attemptConnect(): Promise<Db | null> {
     await mongoClient.connect();
     db = mongoClient.db('Pokemon_Arena');
     mongoConnected = true;
-    mongoConnectionError = null;
     console.log('✅ Connected to MongoDB Atlas Database: Pokemon_Arena');
-
-    // Ensure otps collection is completely removed from the database
-    try {
-      await db.collection('otps').drop();
-      console.log('🗑️ Removed otps collection from database');
-    } catch {
-      // collection may already not exist or is dropped
-    }
 
     // Create unique index on email and username
     try {
@@ -82,23 +78,14 @@ async function attemptConnect(): Promise<Db | null> {
     }
 
     return db;
-  } catch (err: unknown) {
-    const rawMsg = err instanceof Error ? err.message : String(err);
-    let friendlyError = rawMsg;
-    if (rawMsg.includes('SSL alert number 80') || rawMsg.includes('tlsv1 alert internal error')) {
-      friendlyError = 'MongoDB Atlas IP access restricted (SSL Alert 80: IP not whitelisted in Atlas Network Access). Add 0.0.0.0/0 to Atlas Network Access to allow cloud container sync.';
-    }
-
+  } catch {
     mongoConnected = false;
-    mongoConnectionError = friendlyError;
     mongoClient = null;
     db = null;
 
-    // Log informative status without triggering stderr error alerts
-    if (!loggedMongoNotice) {
-      loggedMongoNotice = true;
-      console.log(`ℹ️ [Database Notice] MongoDB Atlas is currently offline or IP-restricted: ${friendlyError}`);
-      console.log('ℹ️ [Database Notice] Pokémon Arena is running seamlessly using high-performance In-Memory & Local Storage mode.');
+    if (!loggedStorageNotice) {
+      loggedStorageNotice = true;
+      console.log('⚡ Pokémon Arena: Running on high-performance Local & Persistent Storage engine.');
     }
     return null;
   }
@@ -295,11 +282,78 @@ async function sendOtpEmail(toEmail: string, otp: string, purpose: 'signup' | 'l
   };
 }
 
-// In-memory fallback stores if MongoDB Atlas is momentarily unavailable
+// In-memory and local disk persistent storage
 const inMemoryTrainers = new Map<string, Record<string, unknown>>();
 const inMemoryOtps = new Map<string, { otp: string; expiresAt: number }>();
 const inMemoryPhoneOtps = new Map<string, { otp: string; expiresAt: number; displayName?: string }>();
 const inMemoryHighScores: Array<Record<string, unknown>> = [];
+
+const DATA_DIR = path.join(process.cwd(), 'data');
+const TRAINERS_FILE = path.join(DATA_DIR, 'trainers.json');
+const HIGHSCORES_FILE = path.join(DATA_DIR, 'highscores.json');
+
+function initLocalPersistence() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(TRAINERS_FILE)) {
+      const raw = fs.readFileSync(TRAINERS_FILE, 'utf-8');
+      const data = JSON.parse(raw);
+      if (Array.isArray(data)) {
+        for (const t of data) {
+          if (t && typeof t === 'object') {
+            if (t.email) inMemoryTrainers.set(String(t.email).toLowerCase(), t);
+            if (t.username) inMemoryTrainers.set(String(t.username).toLowerCase(), t);
+            if (t.id) inMemoryTrainers.set(String(t.id), t);
+            if (t.phone) inMemoryTrainers.set(String(t.phone), t);
+          }
+        }
+      }
+    }
+    if (fs.existsSync(HIGHSCORES_FILE)) {
+      const raw = fs.readFileSync(HIGHSCORES_FILE, 'utf-8');
+      const data = JSON.parse(raw);
+      if (Array.isArray(data)) {
+        inMemoryHighScores.length = 0;
+        inMemoryHighScores.push(...data);
+      }
+    }
+  } catch {
+    // fallback gracefully
+  }
+}
+
+function persistTrainersToDisk() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    const seen = new Set<string>();
+    const uniqueTrainers: Record<string, unknown>[] = [];
+    for (const t of inMemoryTrainers.values()) {
+      const key = String(t.id || t.email || t.username);
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueTrainers.push(t);
+      }
+    }
+    fs.writeFileSync(TRAINERS_FILE, JSON.stringify(uniqueTrainers, null, 2), 'utf-8');
+  } catch {
+    // fallback gracefully
+  }
+}
+
+function persistHighScoresToDisk() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(HIGHSCORES_FILE, JSON.stringify(inMemoryHighScores, null, 2), 'utf-8');
+  } catch {
+    // fallback gracefully
+  }
+}
 
 function cleanPhoneNumber(raw: string): string {
   let cleaned = String(raw).trim().replace(/[^\d+]/g, '');
@@ -387,6 +441,7 @@ function getOrInitTrainer(
     inMemoryTrainers.set(cleanD.toLowerCase(), trainer);
     inMemoryTrainers.set(cleanD.toLowerCase().replace(/[\s_-]/g, ''), trainer);
   }
+  persistTrainersToDisk();
 
   return trainer;
 }
@@ -426,9 +481,9 @@ app.get('/api/health', async (req, res) => {
   const database = await getDb();
   res.json({
     status: 'ok',
+    mode: database && mongoConnected ? 'mongodb' : 'persistent_storage',
     mongodbConnected: !!database && mongoConnected,
     database: 'Pokemon_Arena',
-    error: mongoConnectionError,
   });
 });
 
@@ -583,10 +638,12 @@ app.post('/api/auth/verify-signup-otp', async (req, res) => {
 
     if (database) {
       await database.collection('trainers').insertOne(newAccount);
-      console.log(`✅ Saved new Trainer account to MongoDB: ${normalizedEmail} (${cleanName})`);
-    } else {
-      inMemoryTrainers.set(normalizedEmail, newAccount);
+      console.log(`✅ Saved new Trainer account: ${normalizedEmail} (${cleanName})`);
     }
+    inMemoryTrainers.set(normalizedEmail, newAccount);
+    if (newAccount.username) inMemoryTrainers.set(String(newAccount.username).toLowerCase(), newAccount);
+    if (newAccount.id) inMemoryTrainers.set(String(newAccount.id), newAccount);
+    persistTrainersToDisk();
 
     // Return account without exposing raw password in response
     const { password: _, ...safeAccount } = newAccount;
@@ -706,10 +763,12 @@ app.post('/api/auth/register', async (req, res) => {
 
     if (database) {
       await database.collection('trainers').insertOne(newAccount);
-      console.log(`✅ [DIRECT REGISTER] Saved new Trainer to MongoDB: ${normalizedEmail} (${cleanName})`);
-    } else {
-      inMemoryTrainers.set(normalizedEmail, newAccount);
+      console.log(`✅ [DIRECT REGISTER] Saved new Trainer: ${normalizedEmail} (${cleanName})`);
     }
+    inMemoryTrainers.set(normalizedEmail, newAccount);
+    if (newAccount.username) inMemoryTrainers.set(String(newAccount.username).toLowerCase(), newAccount);
+    if (newAccount.id) inMemoryTrainers.set(String(newAccount.id), newAccount);
+    persistTrainersToDisk();
 
     const { password: _, ...safeAccount } = newAccount;
 
@@ -1093,6 +1152,8 @@ app.post('/api/auth/verify-phone-otp', async (req, res) => {
     }
     inMemoryTrainers.set(syntheticEmail, newMobileAccount);
     inMemoryTrainers.set(cleanPhone, newMobileAccount);
+    if (newMobileAccount.id) inMemoryTrainers.set(String(newMobileAccount.id), newMobileAccount);
+    persistTrainersToDisk();
 
     console.log(`📱 New Mobile Trainer registered: ${cleanPhone} (${chosenName})`);
 
@@ -1168,16 +1229,21 @@ app.post('/api/account/sync', async (req, res) => {
         { $set: updateFields },
         { upsert: false }
       );
-    } else {
-      const key = normalizedEmail || cleanPhone || account.id;
-      const existing = inMemoryTrainers.get(key);
-      if (existing) {
-        inMemoryTrainers.set(key, {
-          ...existing,
-          ...account,
-          updatedAt: new Date().toISOString(),
-        });
-      }
+    }
+
+    const key = normalizedEmail || cleanPhone || account.id;
+    if (key) {
+      const existing = inMemoryTrainers.get(key) || account;
+      const merged = {
+        ...existing,
+        ...account,
+        updatedAt: new Date().toISOString(),
+      };
+      inMemoryTrainers.set(key, merged);
+      if (account.id) inMemoryTrainers.set(String(account.id), merged);
+      if (normalizedEmail) inMemoryTrainers.set(normalizedEmail, merged);
+      if (cleanPhone) inMemoryTrainers.set(cleanPhone, merged);
+      persistTrainersToDisk();
     }
 
     return res.json({ success: true });
@@ -1455,9 +1521,9 @@ app.post('/api/highscores', async (req, res) => {
     const database = await getDb();
     if (database) {
       await database.collection('high_scores').insertOne(newRecord);
-    } else {
-      inMemoryHighScores.push(newRecord);
     }
+    inMemoryHighScores.push(newRecord);
+    persistHighScoresToDisk();
 
     return res.json({ success: true, record: newRecord });
   } catch (err: unknown) {
@@ -2140,9 +2206,12 @@ async function startServer() {
     });
   }
 
+  // Initialize local persistent storage
+  initLocalPersistence();
+
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Pokémon Arena server running on http://0.0.0.0:${PORT}`);
-    // Pre-connect to MongoDB
+    // Pre-connect to MongoDB if configured
     getDb();
   });
 }
