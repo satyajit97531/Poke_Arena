@@ -2211,12 +2211,30 @@ app.post('/api/duel/room/:code/next', (req, res) => {
 app.post('/api/duel/room/:code/leave', (req, res) => {
   try {
     const normalizedCode = String(req.params.code).trim().toUpperCase();
-    activeDuelRooms.delete(normalizedCode);
+    const room = activeDuelRooms.get(normalizedCode);
+    if (room) {
+      room.status = 'finished';
+      room.lastActivity = Date.now();
+      // Keep room available briefly so opponent's client sees conclusion cleanly
+      setTimeout(() => {
+        activeDuelRooms.delete(normalizedCode);
+      }, 20000);
+    }
     return res.json({ success: true });
   } catch (err) {
     return res.status(500).json({ error: 'Failed to leave.' });
   }
 });
+
+// Periodic cleanup of stale duel rooms (> 15 min inactive)
+setInterval(() => {
+  const now = Date.now();
+  for (const [code, room] of activeDuelRooms.entries()) {
+    if (now - (room.lastActivity || room.createdAt) > 15 * 60 * 1000) {
+      activeDuelRooms.delete(code);
+    }
+  }
+}, 5 * 60 * 1000);
 
 
 // Vite middleware setup

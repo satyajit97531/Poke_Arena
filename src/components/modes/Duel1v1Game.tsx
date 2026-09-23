@@ -171,7 +171,7 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
 
   // Poll active room state
   useEffect(() => {
-    if (!room?.code) {
+    if (!room?.code || room.status === 'finished') {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
@@ -179,25 +179,57 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
       return;
     }
 
+    let isMounted = true;
+    let inFlight = false;
+    const abortController = new AbortController();
+
     const fetchRoom = async () => {
+      if (!isMounted || inFlight || !room?.code) return;
+      inFlight = true;
+
       try {
-        const res = await fetch(`/api/duel/room/${room.code}`);
+        const res = await fetch(`/api/duel/room/${encodeURIComponent(room.code)}`, {
+          signal: abortController.signal,
+          headers: { 'Cache-Control': 'no-cache' },
+        });
+
+        if (!isMounted) return;
+
+        if (res.status === 404) {
+          // Room expired or host left
+          if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current);
+            pollIntervalRef.current = null;
+          }
+          if (room.status !== 'finished') {
+            setRoom(null);
+          }
+          return;
+        }
+
         if (!res.ok) return;
         const data = await res.json();
-        if (data.success && data.room) {
-          const updated: DuelRoomState = data.room;
+        if (!isMounted || !data.success || !data.room) return;
 
-          // If new round index started, reset local choice
-          if (updated.currentRoundIdx !== room.currentRoundIdx) {
-            setSelectedChoiceId(null);
-            setHasAnsweredThisRound(false);
-            setTypedGuess('');
+        const updated: DuelRoomState = data.room;
+
+        // If new round index started, reset local choice
+        if (updated.currentRoundIdx !== room.currentRoundIdx) {
+          setSelectedChoiceId(null);
+          setHasAnsweredThisRound(false);
+          setTypedGuess('');
+        }
+
+        setRoom(updated);
+
+        // If game finished, award scores & log battle history and halt polling
+        if (updated.status === 'finished') {
+          if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current);
+            pollIntervalRef.current = null;
           }
 
-          setRoom(updated);
-
-          // If game finished, award scores & log battle history
-          if (updated.status === 'finished' && room.status !== 'finished') {
+          if (room.status !== 'finished') {
             confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
             sound.playFanfare();
             const me = updated.host.id === myPlayerId ? updated.host : updated.guest;
@@ -226,14 +258,22 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
             }
           }
         }
-      } catch (err) {
-        console.error('Error polling duel room:', err);
+      } catch (err: any) {
+        // Silently handle aborts or transient network drops during polling
+        if (err?.name === 'AbortError') return;
+      } finally {
+        inFlight = false;
       }
     };
 
-    pollIntervalRef.current = setInterval(fetchRoom, 750);
+    pollIntervalRef.current = setInterval(fetchRoom, 800);
     return () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      isMounted = false;
+      abortController.abort();
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
     };
   }, [room?.code, room?.currentRoundIdx, room?.status, myPlayerId]);
 
@@ -388,8 +428,8 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
           setRoom(data.room);
         }
       }
-    } catch (err) {
-      console.error('Error submitting answer:', err);
+    } catch {
+      // Graceful fallback for network blips during answer submission
     }
   };
 
@@ -928,7 +968,7 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
   const myPlayer = isHost ? room.host : room.guest;
   const rivalPlayer = isHost ? room.guest : room.host;
   const myAnswer = myPlayerId ? room.roundAnswers[myPlayerId] : null;
-  const isReveal = room.status === 'round_reveal' || room.status === 'finished';
+  const isReveal = room.status === 'round_reveal';
 
   // Determine shadowCrop based on question or deterministic fallback
   const shadowCrop: ShadowCropType = curQ?.shadowCrop || (
@@ -977,7 +1017,6 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
         weight: curQ.weight || 100,
         stats: { hp: 50, attack: 50, defense: 50, spAtk: 50, spDef: 50, speed: 50 },
         artwork: curQ.artwork,
-        silhouette: curQ.artwork,
         flavorText: curQ.species,
       }
     : null;
