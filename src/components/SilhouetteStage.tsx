@@ -1,9 +1,9 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Clock, Sparkles, Eye, Compass, Info, Target, Scissors, Zap, Skull, ShieldCheck, Flame } from 'lucide-react';
+import { Clock, Sparkles, Eye, Compass, Info, Target, Scissors, Zap, Skull, ShieldCheck, Flame, Lightbulb } from 'lucide-react';
 import { GameDifficulty, MainGameMode, Pokemon, ShadowCropType } from '../types/pokemon';
 import { POKEMON_TYPES, REGIONS } from '../utils/pokemonTypes';
-import { getExtremeClues } from '../utils/extremeClues';
+import { getOneLinePokemonHint, getEvolutionStageHint } from '../utils/extremeClues';
 import { sound } from '../utils/audio';
 
 interface SilhouetteStageProps {
@@ -46,7 +46,6 @@ export const SilhouetteStage: React.FC<SilhouetteStageProps> = ({
 
   const timePercent = maxTime > 0 ? Math.max(0, Math.min(100, (timeLeft / maxTime) * 100)) : 100;
   const isUrgent = mode !== 'zen' && timeLeft <= 4 && !isRevealed;
-  const extremeClues = getExtremeClues(pokemon);
 
   // Medium Difficulty: Upper or Lower body half
   let clipStyle: React.CSSProperties = {};
@@ -129,15 +128,29 @@ export const SilhouetteStage: React.FC<SilhouetteStageProps> = ({
             </span>
           )}
 
+          {difficulty === 'extreme' && (
+            <span className="text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1">
+              <Skull className="w-3 h-3 text-purple-400" />
+              <span>Extreme</span>
+            </span>
+          )}
+
+          {difficulty === 'menacing' && (
+            <span className="text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-md bg-red-500/20 text-red-300 border border-red-500/30 flex items-center gap-1">
+              <Flame className="w-3 h-3 text-red-400" />
+              <span>Menacing</span>
+            </span>
+          )}
+
           <span className="text-xs font-mono font-medium px-2.5 py-1 rounded-full bg-slate-900 border border-slate-800 text-slate-400">
             {isRevealed ? `#${String(pokemon.id).padStart(4, '0')}` : 'National Dex ???'}
           </span>
         </div>
       </div>
 
-      {/* Timer Bar for Classic / Blitz / Survival */}
+      {/* Timer Bar for Classic / Blitz / Survival / Menacing */}
       {mode !== 'zen' && (
-        <div className="w-full max-w-xl h-2 bg-slate-900/90 rounded-full overflow-hidden border border-slate-800/80 mb-4 relative">
+        <div className="w-full max-w-xl h-2 bg-slate-900/90 rounded-full overflow-hidden border border-slate-800/80 mb-3 relative">
           <motion.div
             className={`h-full rounded-full transition-colors ${
               timePercent < 25
@@ -150,6 +163,23 @@ export const SilhouetteStage: React.FC<SilhouetteStageProps> = ({
             transition={{ ease: 'linear', duration: 0.1 }}
           />
         </div>
+      )}
+
+      {/* 1-Line Normal Hint for Hard Difficulty Mode */}
+      {!isRevealed && difficulty === 'hard' && (
+        <motion.div
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-xl mx-auto mb-2.5 px-3.5 py-1.5 rounded-xl flex items-center justify-center gap-2 text-center shadow-md backdrop-blur-md bg-rose-950/60 border border-rose-500/40 text-rose-200"
+        >
+          <Lightbulb className="w-4 h-4 shrink-0 animate-pulse text-amber-400" />
+          <div className="text-xs sm:text-sm font-medium">
+            <span className="opacity-80">Hint:</span>{' '}
+            <strong className="text-white font-bold tracking-wide">
+              {getOneLinePokemonHint(pokemon)}
+            </strong>
+          </div>
+        </motion.div>
       )}
 
       {/* Main Silhouette Arena Display */}
@@ -191,53 +221,64 @@ export const SilhouetteStage: React.FC<SilhouetteStageProps> = ({
           )}
         </AnimatePresence>
 
-        {/* Pokemon Image (Silhouette vs Revealed with Crop / Zoom) OR Extreme/Menacing Dossier */}
+        {/* Pokemon Image (Silhouette vs Revealed with Crop / Zoom) OR Extreme/Menacing Classified 1-Line Intel */}
         <div className="relative z-10 w-full h-full flex items-center justify-center overflow-hidden">
           {!isRevealed && (difficulty === 'extreme' || difficulty === 'menacing') ? (
-            <div className="relative z-10 w-full h-full flex flex-col items-center justify-center p-2 sm:p-4 text-center">
+            <div className="relative z-10 w-full h-full flex flex-col items-center justify-center p-3 sm:p-5 text-center">
               {difficulty === 'menacing' ? (
-                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-500/20 border border-red-500/40 text-red-300 text-xs font-bold font-display uppercase tracking-wider mb-2">
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-500/20 border border-red-500/40 text-red-300 text-xs font-bold font-display uppercase tracking-wider mb-3">
                   <Flame className="w-3.5 h-3.5 text-red-400" />
                   <span>Menacing Classified Dossier</span>
                 </div>
               ) : (
-                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-300 text-xs font-bold font-display uppercase tracking-wider mb-2">
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-300 text-xs font-bold font-display uppercase tracking-wider mb-3">
                   <Skull className="w-3.5 h-3.5 text-purple-400" />
                   <span>Extreme Classified Dossier</span>
                 </div>
               )}
 
-              <div className={`w-full max-w-sm bg-slate-950/80 border ${difficulty === 'menacing' ? 'border-red-500/30' : 'border-purple-500/30'} rounded-xl p-3 shadow-inner grid grid-cols-2 gap-2 text-left text-xs`}>
-                <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                  <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Body Color</span>
-                  <span className={`${difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'} font-semibold text-xs leading-tight`}>{extremeClues.bodyColor}</span>
+              <div
+                className={`w-full max-w-md bg-slate-950/90 border ${
+                  difficulty === 'menacing'
+                    ? 'border-red-500/40 shadow-red-950/30'
+                    : 'border-purple-500/40 shadow-purple-950/30'
+                } rounded-2xl p-5 sm:p-6 shadow-2xl flex flex-col items-center justify-center text-center`}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <Lightbulb
+                    className={`w-5 h-5 ${
+                      difficulty === 'menacing' ? 'text-red-400' : 'text-amber-400'
+                    } animate-pulse shrink-0`}
+                  />
+                  <span className="text-xs uppercase font-bold tracking-widest text-slate-400">
+                    Main Pokémon Clue
+                  </span>
                 </div>
-                <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                  <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Has Wings?</span>
-                  <span className={`${difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'} font-semibold text-xs leading-tight`}>{extremeClues.hasWings}</span>
-                </div>
-                <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                  <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Body Stance</span>
-                  <span className={`${difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'} font-semibold text-xs leading-tight`}>{extremeClues.bodyStance}</span>
-                </div>
-                <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                  <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Tail Feature</span>
-                  <span className={`${difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'} font-semibold text-xs leading-tight`}>{extremeClues.hasTail}</span>
-                </div>
-                <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                  <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Weight Tier</span>
-                  <span className={`${difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'} font-semibold text-xs leading-tight`}>{extremeClues.weightClass}</span>
-                </div>
-                <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                  <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Height Tier</span>
-                  <span className={`${difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'} font-semibold text-xs leading-tight`}>{extremeClues.heightClass}</span>
-                </div>
+                <p className="text-xl sm:text-2xl font-black font-display text-white tracking-wide leading-snug my-2">
+                  &ldquo;{getOneLinePokemonHint(pokemon)}&rdquo;
+                </p>
+
+                {difficulty === 'menacing' && (
+                  <div className="mt-2.5 px-3.5 py-1.5 rounded-xl bg-red-950/80 border border-red-500/30 flex items-center justify-center gap-2 text-xs sm:text-sm text-red-200">
+                    <span className="text-red-400 font-bold uppercase tracking-wider text-[11px]">
+                      Evolution Stage:
+                    </span>
+                    <strong className="text-white font-black tracking-wide">
+                      {getEvolutionStageHint(pokemon)}
+                    </strong>
+                  </div>
+                )}
+
+                <p
+                  className={`text-xs ${
+                    difficulty === 'menacing' ? 'text-red-300/80' : 'text-purple-300/80'
+                  } mt-2.5 font-medium`}
+                >
+                  {difficulty === 'menacing'
+                    ? 'Zero options provided! Type the exact Pokémon name below.'
+                    : '4 options provided below! Identify the matching Pokémon.'}
+                </p>
               </div>
-              <p className={`text-[11px] ${difficulty === 'menacing' ? 'text-red-300/80' : 'text-purple-300/80'} mt-2 font-medium`}>
-                {difficulty === 'menacing'
-                  ? 'Zero options provided! Type the exact Pokémon name below.'
-                  : 'Classified dossier clues revealed! Choose from 4 options below.'}
-              </p>
             </div>
           ) : (
             <div
@@ -305,8 +346,8 @@ export const SilhouetteStage: React.FC<SilhouetteStageProps> = ({
         </AnimatePresence>
       </div>
 
-      {/* Prominent Elemental Type Hints (Hidden during Extreme and Menacing modes unrevealed) */}
-      {(isRevealed || (difficulty !== 'extreme' && difficulty !== 'menacing')) && (
+      {/* Prominent Elemental Type Hints (Shown in Easy, Medium, Hard, and Extreme; Hidden in Menacing unrevealed) */}
+      {(isRevealed || difficulty !== 'menacing') && (
         <div className="w-full max-w-xl mt-4 flex flex-col items-center gap-2">
           <div className="flex items-center gap-1.5 text-xs text-slate-400 font-medium">
             <Sparkles className="w-3.5 h-3.5 text-amber-400" />
@@ -336,8 +377,8 @@ export const SilhouetteStage: React.FC<SilhouetteStageProps> = ({
         </div>
       )}
 
-      {/* Extra Unlockable Hints Drawer (Region, Category, First Letter) */}
-      {!isRevealed && difficulty !== 'extreme' && (
+      {/* Extra Unlockable Hints Drawer (Region, Category, First Letter - Hidden in Extreme and Menacing) */}
+      {!isRevealed && difficulty !== 'extreme' && difficulty !== 'menacing' && (
         <div className="w-full max-w-xl mt-3 pt-3 border-t border-slate-800/60 flex flex-wrap items-center justify-center gap-2">
           {revealedHints.region ? (
             <span className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 font-medium">

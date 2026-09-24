@@ -1,4 +1,7 @@
 import { Pokemon } from '../types/pokemon';
+import pokemonEvolutionStages from '../data/pokemonEvolutionStages.json';
+
+const stagesMap: Record<string, string> = pokemonEvolutionStages as Record<string, string>;
 
 export interface ExtremeClueData {
   bodyColor: string;
@@ -290,3 +293,95 @@ export function getExtremeClues(pokemon: Pokemon): ExtremeClueData {
     habitatClue,
   };
 }
+
+/**
+ * Normal 1-line hint for Menacing difficulty.
+ * Examples:
+ * - Pikachu -> "Electric Mouse Pokémon"
+ * - Piplup -> "A baby penguin Pokémon"
+ */
+export function getOneLinePokemonHint(pokemon: {
+  id?: number;
+  name?: string;
+  displayName?: string;
+  species?: string;
+  types?: string[];
+  flavorText?: string;
+} | null | undefined): string {
+  if (!pokemon) return 'A mysterious Pokémon';
+
+  const rawName = (pokemon.name || pokemon.displayName || '').toLowerCase().trim();
+
+  // Canonical examples requested by user
+  if (rawName === 'pikachu') {
+    return 'Electric Mouse Pokémon';
+  }
+  if (rawName === 'piplup') {
+    return 'A baby penguin Pokémon';
+  }
+
+  const types = pokemon.types || [];
+  const primaryType = types[0] ? types[0].charAt(0).toUpperCase() + types[0].slice(1).toLowerCase() : '';
+  const secondaryType = types[1] ? types[1].charAt(0).toUpperCase() + types[1].slice(1).toLowerCase() : '';
+
+  let species = (pokemon.species || '').trim();
+  // Strip trailing "Pokémon" or "Pokemon" to avoid duplicate words
+  species = species.replace(/\s*pok[eé]mon\s*$/i, '').trim();
+
+  if (!species) {
+    if (primaryType && secondaryType) {
+      return `${primaryType} & ${secondaryType} type Pokémon`;
+    }
+    if (primaryType) {
+      return `${primaryType} type Pokémon`;
+    }
+    return 'A mysterious Pokémon';
+  }
+
+  const lowerSpecies = species.toLowerCase();
+
+  // If species already starts with or contains the primary type (e.g. Fire Mouse for Cyndaquil)
+  if (primaryType && lowerSpecies.startsWith(primaryType.toLowerCase())) {
+    return `${species} Pokémon`;
+  }
+
+  // Specific common animal types
+  if (lowerSpecies === 'penguin') {
+    return 'A penguin Pokémon';
+  }
+  if (lowerSpecies === 'mouse') {
+    return `${primaryType ? primaryType + ' ' : ''}Mouse Pokémon`;
+  }
+
+  if (primaryType) {
+    return `${primaryType} ${species} Pokémon`;
+  }
+
+  return `${species} Pokémon`;
+}
+
+/**
+ * Returns the evolution stage hint of a Pokémon (e.g. Baby, Basic / Unevolved, Middle Evolution, Final Evolution, Single-Stage).
+ */
+export function getEvolutionStageHint(pokemon: {
+  id?: number;
+  name?: string;
+  displayName?: string;
+} | null | undefined): string {
+  if (!pokemon) return 'Basic Pokémon (Unevolved)';
+
+  if (pokemon.id && stagesMap[String(pokemon.id)]) {
+    return stagesMap[String(pokemon.id)];
+  }
+
+  const cleanName = (pokemon.name || pokemon.displayName || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+  if (cleanName && stagesMap[cleanName]) {
+    return stagesMap[cleanName];
+  }
+
+  return 'Basic Pokémon (Unevolved)';
+}
+

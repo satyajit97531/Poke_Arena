@@ -822,11 +822,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                         <h5 className="text-xs font-bold text-white">Trainer Account</h5>
                         <p className="text-[11px] text-slate-400">
                           Signed in as <span className="text-purple-300 font-semibold font-mono">@{account.username || account.displayName.toLowerCase().replace(/\s+/g, '_')}</span>
-                          {account.phoneNumber ? (
-                            <span className="text-cyan-400 font-mono text-[11px] ml-1.5 font-bold">📱 {account.phoneNumber}</span>
-                          ) : account.email && !account.email.includes('@mobile.pokemonarena.com') ? (
+                          {account.email && (
                             <span className="text-slate-400 font-mono text-[10px] ml-1.5">({account.email})</span>
-                          ) : null}
+                          )}
                         </p>
                         <div className="flex items-center gap-1.5 mt-1">
                           {mongoStatus.connected ? (

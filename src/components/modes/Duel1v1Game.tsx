@@ -30,10 +30,11 @@ import {
   Search,
   Scissors,
   Target,
+  Lightbulb,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { BattleRecord, GameDifficulty, RegionId, ShadowCropType, Pokemon, PokemonType } from '../../types/pokemon';
-import { getExtremeClues } from '../../utils/extremeClues';
+import { getOneLinePokemonHint, getEvolutionStageHint } from '../../utils/extremeClues';
 import { POKEMON_TYPES } from '../../utils/pokemonTypes';
 import { sound } from '../../utils/audio';
 
@@ -588,8 +589,8 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
                   <option value="easy">Easy (Full Silhouette - 15s)</option>
                   <option value="medium">Medium (Half Slice & 4 Options - 12s)</option>
                   <option value="hard">Hard (Body Part Zoom & 4 Options - 8s)</option>
-                  <option value="extreme">Extreme (Classified Dossier & 4 Options - 30s)</option>
-                  <option value="menacing">Menacing (Classified Dossier & Manual Typing - 60s)</option>
+                  <option value="extreme">Extreme (1-Line Clue & 4 Options - 30s)</option>
+                  <option value="menacing">Menacing (Evolution Stage & Manual Typing - 60s)</option>
                 </select>
               </div>
 
@@ -707,8 +708,8 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
                   <option value="easy">Easy (Full Silhouette - 15s)</option>
                   <option value="medium">Medium (Half Slice & 4 Options - 12s)</option>
                   <option value="hard">Hard (Body Part Zoom & 4 Options - 8s)</option>
-                  <option value="extreme">Extreme (Classified Dossier & 4 Options - 30s)</option>
-                  <option value="menacing">Menacing (Classified Dossier & Manual Typing - 60s)</option>
+                  <option value="extreme">Extreme (1-Line Clue & 4 Options - 30s)</option>
+                  <option value="menacing">Menacing (Evolution Stage & Manual Typing - 60s)</option>
                 </select>
               </div>
 
@@ -1021,8 +1022,6 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
       }
     : null;
 
-  const extremeClues = curPokemon ? getExtremeClues(curPokemon) : null;
-
   return (
     <div className="w-full max-w-4xl mx-auto space-y-4 p-3 sm:p-5 select-none">
       {/* Head-to-Head Live Scoreboard Header */}
@@ -1160,6 +1159,24 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
           </span>
         </div>
 
+        {/* 1-Line Normal Hint for Hard Difficulty Duel */}
+        {!isReveal && room.difficulty === 'hard' && (
+          <div className="w-full max-w-xl mx-auto mb-2.5 px-3.5 py-1.5 rounded-xl flex items-center justify-center gap-2 text-center shadow-md backdrop-blur-md bg-rose-950/60 border border-rose-500/40 text-rose-200">
+            <Lightbulb className="w-4 h-4 shrink-0 animate-pulse text-amber-400" />
+            <div className="text-xs sm:text-sm font-medium">
+              <span className="opacity-80">Hint:</span>{' '}
+              <strong className="text-white font-bold tracking-wide">
+                {getOneLinePokemonHint({
+                  name: curQ.targetName,
+                  displayName: curQ.displayName,
+                  species: curQ.species,
+                  types: curQ.types,
+                })}
+              </strong>
+            </div>
+          </div>
+        )}
+
         {/* Central Display Arena */}
         <div className="relative w-full max-w-xl aspect-[4/3] max-h-[320px] sm:max-h-[360px] rounded-2xl bg-gradient-to-b from-slate-950/90 via-slate-900 to-slate-950/90 border border-slate-800 shadow-2xl flex flex-col items-center justify-center p-3 sm:p-5 overflow-hidden mx-auto">
           {/* Ambient Glow */}
@@ -1171,110 +1188,73 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
           />
 
           {!isReveal && (room.difficulty === 'extreme' || room.difficulty === 'menacing') ? (
-            /* Classified Dossier for Extreme / Menacing (No silhouette shown) */
-            <div className="relative z-10 w-full h-full flex flex-col items-center justify-center p-2 sm:p-3 text-center">
+            /* Classified 1-Line Intel for Extreme / Menacing (No silhouette shown) */
+            <div className="relative z-10 w-full h-full flex flex-col items-center justify-center p-3 sm:p-5 text-center">
               {room.difficulty === 'menacing' ? (
-                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-500/20 border border-red-500/40 text-red-300 text-xs font-bold font-display uppercase tracking-wider mb-2">
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-500/20 border border-red-500/40 text-red-300 text-xs font-bold font-display uppercase tracking-wider mb-3">
                   <Flame className="w-3.5 h-3.5 text-red-400" />
                   <span>Menacing Classified Dossier</span>
                 </div>
               ) : (
-                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-300 text-xs font-bold font-display uppercase tracking-wider mb-2">
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-300 text-xs font-bold font-display uppercase tracking-wider mb-3">
                   <Skull className="w-3.5 h-3.5 text-purple-400" />
                   <span>Extreme Classified Dossier</span>
                 </div>
               )}
 
-              {extremeClues && (
-                <div
-                  className={`w-full max-w-sm bg-slate-950/90 border ${
-                    room.difficulty === 'menacing' ? 'border-red-500/30' : 'border-purple-500/30'
-                  } rounded-xl p-3 shadow-inner grid grid-cols-2 gap-2 text-left text-xs`}
-                >
-                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                    <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
-                      Body Color
-                    </span>
-                    <span
-                      className={`${
-                        room.difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'
-                      } font-semibold text-xs leading-tight`}
-                    >
-                      {extremeClues.bodyColor}
-                    </span>
-                  </div>
-                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                    <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
-                      Has Wings?
-                    </span>
-                    <span
-                      className={`${
-                        room.difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'
-                      } font-semibold text-xs leading-tight`}
-                    >
-                      {extremeClues.hasWings}
-                    </span>
-                  </div>
-                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                    <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
-                      Body Stance
-                    </span>
-                    <span
-                      className={`${
-                        room.difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'
-                      } font-semibold text-xs leading-tight`}
-                    >
-                      {extremeClues.bodyStance}
-                    </span>
-                  </div>
-                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                    <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
-                      Tail Feature
-                    </span>
-                    <span
-                      className={`${
-                        room.difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'
-                      } font-semibold text-xs leading-tight`}
-                    >
-                      {extremeClues.hasTail}
-                    </span>
-                  </div>
-                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                    <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
-                      Weight Tier
-                    </span>
-                    <span
-                      className={`${
-                        room.difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'
-                      } font-semibold text-xs leading-tight`}
-                    >
-                      {extremeClues.weightClass}
-                    </span>
-                  </div>
-                  <div className="bg-slate-900/80 p-2 rounded-lg border border-slate-800">
-                    <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
-                      Height Tier
-                    </span>
-                    <span
-                      className={`${
-                        room.difficulty === 'menacing' ? 'text-red-200' : 'text-purple-200'
-                      } font-semibold text-xs leading-tight`}
-                    >
-                      {extremeClues.heightClass}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              <p
-                className={`text-[11px] ${
-                  room.difficulty === 'menacing' ? 'text-red-300/80' : 'text-purple-300/80'
-                } mt-2 font-medium`}
+              <div
+                className={`w-full max-w-md bg-slate-950/90 border ${
+                  room.difficulty === 'menacing'
+                    ? 'border-red-500/40 shadow-red-950/30'
+                    : 'border-purple-500/40 shadow-purple-950/30'
+                } rounded-2xl p-5 sm:p-6 shadow-2xl flex flex-col items-center justify-center text-center`}
               >
-                {room.difficulty === 'menacing'
-                  ? 'Zero options provided! Type the exact Pokémon name below.'
-                  : 'Classified dossier clues revealed! Choose from 4 options below.'}
-              </p>
+                <div className="flex items-center gap-2 mb-2">
+                  <Lightbulb
+                    className={`w-5 h-5 ${
+                      room.difficulty === 'menacing' ? 'text-red-400' : 'text-amber-400'
+                    } animate-pulse shrink-0`}
+                  />
+                  <span className="text-xs uppercase font-bold tracking-widest text-slate-400">
+                    Main Pokémon Clue
+                  </span>
+                </div>
+                <p className="text-xl sm:text-2xl font-black font-display text-white tracking-wide leading-snug my-2">
+                  &ldquo;
+                  {getOneLinePokemonHint({
+                    name: curQ.targetName,
+                    displayName: curQ.displayName,
+                    species: curQ.species,
+                    types: curQ.types,
+                  })}
+                  &rdquo;
+                </p>
+
+                {room.difficulty === 'menacing' && (
+                  <div className="mt-2.5 px-3.5 py-1.5 rounded-xl bg-red-950/80 border border-red-500/30 flex items-center justify-center gap-2 text-xs sm:text-sm text-red-200">
+                    <span className="text-red-400 font-bold uppercase tracking-wider text-[11px]">
+                      Evolution Stage:
+                    </span>
+                    <strong className="text-white font-black tracking-wide">
+                      {getEvolutionStageHint({
+                        id: curQ.targetId,
+                        name: curQ.targetName,
+                        displayName: curQ.displayName,
+                      })}
+                    </strong>
+                  </div>
+                )}
+
+                <p
+                  className={`text-xs ${
+                    room.difficulty === 'menacing' ? 'text-red-300/80' : 'text-purple-300/80'
+                  } mt-2.5 font-medium`}
+                >
+                  {room.difficulty === 'menacing'
+                    ? 'Zero options provided! Type the exact Pokémon name below.'
+                    : '4 options provided below! Identify the matching Pokémon.'}
+                </p>
+              </div>
             </div>
           ) : (
             /* Silhouette / Revealed Pokémon Stage */
@@ -1344,8 +1324,8 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
           </AnimatePresence>
         </div>
 
-        {/* Clues (Types & Species) - Hidden in Extreme / Menacing until Reveal */}
-        {(isReveal || (room.difficulty !== 'extreme' && room.difficulty !== 'menacing')) && (
+        {/* Clues (Types & Species) - Shown in Extreme just like Easy, Medium, Hard; Hidden in Menacing until Reveal */}
+        {(isReveal || room.difficulty !== 'menacing') && (
           <div className="flex items-center justify-center gap-2 flex-wrap text-xs">
             {curQ.types.map((t) => (
               <span
@@ -1364,6 +1344,34 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
         {/* Menacing: Manual Typing Input / Extreme & Others: 4 Options Grid */}
         {room.difficulty === 'menacing' ? (
           <form onSubmit={handleTypedSubmit} className="max-w-md mx-auto pt-2 space-y-3">
+            <div className="w-full flex flex-col gap-1 py-2 px-3.5 bg-red-950/60 border border-red-500/40 rounded-xl text-xs sm:text-sm text-center">
+              <div className="flex items-center justify-center gap-1.5 text-red-200 font-semibold">
+                <Lightbulb className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+                <span>
+                  Hint:{' '}
+                  <strong className="text-white">
+                    &ldquo;
+                    {getOneLinePokemonHint({
+                      name: curQ.targetName,
+                      displayName: curQ.displayName,
+                      species: curQ.species,
+                      types: curQ.types,
+                    })}
+                    &rdquo;
+                  </strong>
+                </span>
+              </div>
+              <div className="text-xs text-red-300 font-medium">
+                Evolution Stage:{' '}
+                <strong className="text-white font-bold">
+                  {getEvolutionStageHint({
+                    id: curQ.targetId,
+                    name: curQ.targetName,
+                    displayName: curQ.displayName,
+                  })}
+                </strong>
+              </div>
+            </div>
             <div className="relative">
               <input
                 type="text"
@@ -1391,8 +1399,9 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
             </button>
           </form>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl mx-auto pt-2">
-            {curQ.options.map((opt) => {
+          <div className="max-w-2xl mx-auto pt-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {curQ.options.map((opt) => {
               const isSelected = selectedChoiceId === opt.id;
               const isCorrect = opt.id === curQ.correctOptionId;
 
@@ -1430,6 +1439,7 @@ export const Duel1v1Game: React.FC<Duel1v1GameProps> = ({
                 </button>
               );
             })}
+            </div>
           </div>
         )}
 

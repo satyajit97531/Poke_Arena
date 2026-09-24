@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Check, X, ArrowRight, Keyboard, Search, Skull, Flame } from 'lucide-react';
+import { Check, X, ArrowRight, Keyboard, Search, Skull, Flame, Lightbulb } from 'lucide-react';
 import { DifficultyMode, GameDifficulty, Pokemon } from '../types/pokemon';
 import { sound } from '../utils/audio';
+import { getOneLinePokemonHint, getEvolutionStageHint } from '../utils/extremeClues';
 
 interface AnswerOptionsProps {
   options: Pokemon[];
@@ -163,10 +164,29 @@ export const AnswerOptions: React.FC<AnswerOptionsProps> = ({
         /* Hardcore Menacing Mode / Manual Typing */
         <form onSubmit={handleMasterSubmit} className="w-full flex flex-col gap-2">
           {isMenacing && (
-            <div className="flex items-center justify-center gap-1.5 py-1 px-3 bg-red-500/15 border border-red-500/30 rounded-xl text-red-300 text-xs font-semibold mb-1">
-              <Flame className="w-3.5 h-3.5 text-red-400" />
-              <span>Menacing Mode: Zero options provided! Type Pokémon name using physical clues</span>
-            </div>
+            <>
+              <div className="flex items-center justify-center gap-1.5 py-1 px-3 bg-red-500/15 border border-red-500/30 rounded-xl text-red-300 text-xs font-semibold">
+                <Flame className="w-3.5 h-3.5 text-red-400" />
+                <span>Menacing Mode: Zero options provided! Type Pokémon name</span>
+              </div>
+              <div className="w-full flex flex-col gap-1.5 py-2 px-3.5 bg-red-950/60 border border-red-500/40 rounded-xl text-xs sm:text-sm mb-1 text-center">
+                <div className="flex items-center justify-center gap-1.5 text-red-200 font-semibold">
+                  <Lightbulb className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+                  <span>
+                    Hint:{' '}
+                    <strong className="text-white">
+                      &ldquo;{getOneLinePokemonHint(correctPokemon)}&rdquo;
+                    </strong>
+                  </span>
+                </div>
+                <div className="text-xs text-red-300 font-medium">
+                  Evolution Stage:{' '}
+                  <strong className="text-white font-bold">
+                    {getEvolutionStageHint(correctPokemon)}
+                  </strong>
+                </div>
+              </div>
+            </>
           )}
           <div className="relative w-full">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />

@@ -17,9 +17,9 @@ export const DifficultySelector: React.FC<DifficultySelectorProps> = ({
   const allLevels: { id: GameDifficulty; label: string; desc: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'easy', label: 'Easy', desc: 'Full Silhouette (15s)', icon: Shield },
     { id: 'medium', label: 'Medium', desc: 'Half Body Slice (15s)', icon: Scissors },
-    { id: 'hard', label: 'Hard', desc: 'Body Part Target & Regional Forms (15s)', icon: Target },
-    { id: 'extreme', label: 'Extreme', desc: 'Classified Clues & 4 Options (30s)', icon: Skull },
-    { id: 'menacing', label: 'Menacing', desc: 'Classified Clues & Manual Typing (60s)', icon: Flame },
+    { id: 'hard', label: 'Hard', desc: 'Body Part Zoom & 1-Line Hint (15s)', icon: Target },
+    { id: 'extreme', label: 'Extreme', desc: '1-Line Clue, Types & 4 Options (30s)', icon: Skull },
+    { id: 'menacing', label: 'Menacing', desc: '1-Line Hint, Evolution Stage & Manual Typing (60s)', icon: Flame },
   ];
 
   const levels = allowedDifficulties

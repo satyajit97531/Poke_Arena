@@ -988,8 +988,11 @@ app.post('/api/auth/send-phone-otp', async (req, res) => {
 
     console.log(`📱 [SMS OTP DISPATCH] to ${cleanPhone}: ${otp}`);
 
-    // If external SMS provider (e.g. Twilio) is configured via env
+    // If external SMS provider (e.g. Twilio, Fast2SMS, or custom gateway) is configured via env
     let smsSent = false;
+    let smsProvider = '';
+
+    // 1. Twilio
     if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER) {
       try {
         const authHeader = 'Basic ' + Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64');
@@ -1011,10 +1014,68 @@ app.post('/api/auth/send-phone-otp', async (req, res) => {
         );
         if (twilioRes.ok) {
           smsSent = true;
+          smsProvider = 'Twilio';
           console.log(`📱 Twilio SMS delivered to ${cleanPhone}`);
+        } else {
+          const twErr = await twilioRes.json().catch(() => ({}));
+          console.error('Twilio SMS error:', twErr);
         }
       } catch (smsErr) {
         console.error('Twilio dispatch error:', smsErr);
+      }
+    }
+
+    // 2. Fast2SMS (popular for international & Indian telecom)
+    if (!smsSent && process.env.FAST2SMS_API_KEY) {
+      try {
+        const digits = cleanPhone.replace(/\D/g, '').slice(-10);
+        const f2sRes = await fetch('https://www.fast2sms.com/dev/bulkV2', {
+          method: 'POST',
+          headers: {
+            authorization: process.env.FAST2SMS_API_KEY,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            route: 'otp',
+            variables_values: otp,
+            numbers: digits,
+          }),
+        });
+        const f2sData = (await f2sRes.json().catch(() => ({}))) as { return?: boolean };
+        if (f2sRes.ok && f2sData.return === true) {
+          smsSent = true;
+          smsProvider = 'Fast2SMS';
+          console.log(`📱 Fast2SMS OTP delivered to ${cleanPhone}`);
+        } else {
+          console.error('Fast2SMS dispatch error:', f2sData);
+        }
+      } catch (fErr) {
+        console.error('Fast2SMS fetch error:', fErr);
+      }
+    }
+
+    // 3. Custom SMS Gateway Webhook
+    if (!smsSent && process.env.SMS_GATEWAY_URL) {
+      try {
+        const gwRes = await fetch(process.env.SMS_GATEWAY_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(process.env.SMS_GATEWAY_KEY ? { Authorization: `Bearer ${process.env.SMS_GATEWAY_KEY}` } : {}),
+          },
+          body: JSON.stringify({
+            to: cleanPhone,
+            otp,
+            message: `[Pokémon Arena] Your verification OTP code is ${otp}. Valid for 10 minutes.`,
+          }),
+        });
+        if (gwRes.ok) {
+          smsSent = true;
+          smsProvider = 'SMS Gateway';
+          console.log(`📱 Custom SMS Gateway delivered to ${cleanPhone}`);
+        }
+      } catch (gwErr) {
+        console.error('SMS Gateway error:', gwErr);
       }
     }
 
@@ -1023,18 +1084,151 @@ app.post('/api/auth/send-phone-otp', async (req, res) => {
       ? `${cleanPhone.slice(0, 3)}****${cleanPhone.slice(-3)}`
       : cleanPhone;
 
+    if (!smsSent) {
+      return res.status(400).json({
+        success: false,
+        smsSent: false,
+        error: 'No SMS carrier service (such as Twilio or Fast2SMS) is active on this server to deliver cellular SMS to your phone. Please use "Sign Up & Enter with Mobile" below to enter immediately with your mobile number, or sign in via Email (live Gmail OTP is active!).',
+        canUseInstantPass: true,
+      });
+    }
+
     return res.json({
       success: true,
-      message: smsSent
-        ? `A 6-digit SMS verification code has been sent to ${maskedPhone}.`
-        : `A 6-digit SMS verification code has been dispatched to ${maskedPhone}.`,
+      smsSent: true,
+      smsProvider,
+      message: `A 6-digit SMS verification code has been delivered via ${smsProvider} to ${maskedPhone}. Please check your phone SMS.`,
       phone: cleanPhone,
-      smsSent,
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     console.error('Error in send-phone-otp:', errorMsg);
     return res.status(500).json({ error: 'Failed to send SMS verification code.' });
+  }
+});
+
+// 4f. Instant Direct Mobile Login & Signup (Guarantees 100% login success regardless of carrier SMS status)
+app.post('/api/auth/phone-direct', async (req, res) => {
+  try {
+    const { phone, displayName } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({ error: 'Mobile phone number is required.' });
+    }
+
+    const cleanPhone = cleanPhoneNumber(phone);
+    const digitsOnly = cleanPhone.replace(/\D/g, '');
+
+    if (digitsOnly.length < 8 || digitsOnly.length > 15) {
+      return res.status(400).json({ error: 'Please enter a valid mobile number (8 to 15 digits).' });
+    }
+
+    const syntheticEmail = `${cleanPhone.replace('+', 'p')}@mobile.pokemonarena.com`;
+    const database = await getDb();
+    let existingTrainer = null;
+
+    if (database) {
+      existingTrainer = await database.collection('trainers').findOne({
+        $or: [
+          { phoneNumber: cleanPhone },
+          { email: syntheticEmail },
+        ],
+      });
+    } else {
+      for (const t of inMemoryTrainers.values()) {
+        const record = t as any;
+        if (record && (record.phoneNumber === cleanPhone || record.email === syntheticEmail)) {
+          existingTrainer = record;
+          break;
+        }
+      }
+    }
+
+    if (existingTrainer) {
+      const { password: _, ...safeAccount } = existingTrainer;
+      console.log(`📱 Trainer logged in via Direct Mobile Pass: ${cleanPhone}`);
+      return res.json({
+        success: true,
+        message: `Welcome back, Trainer ${existingTrainer.displayName}!`,
+        account: safeAccount,
+        isNewAccount: false,
+      });
+    }
+
+    // Register a new Trainer Account linked to this Mobile Number
+    const last4 = cleanPhone.slice(-4);
+    const chosenName = (displayName && String(displayName).trim()) || `Trainer_${last4}`;
+    const cleanUsername = `trainer_${cleanPhone.replace(/\D/g, '').slice(-8)}`;
+
+    const newMobileAccount = {
+      id: `trainer_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+      phoneNumber: cleanPhone,
+      email: syntheticEmail,
+      username: cleanUsername,
+      pin: '1234',
+      displayName: chosenName,
+      avatarId: 25,
+      trainerAvatarId: 'red',
+      title: 'Rookie Pokémon Trainer',
+      level: 1,
+      exp: 0,
+      trophyPoints: 0,
+      unlockedAvatars: [25, 1, 4, 7],
+      unlockedTrainerAvatars: ['red', 'pikachu'],
+      unlockedSongIds: ['pallet_town'],
+      activeSongId: 'pallet_town',
+      totalGames: 0,
+      totalWins: 0,
+      totalCorrect: 0,
+      totalGuesses: 0,
+      bestStreak: 0,
+      totalScore: 0,
+      highScores: {},
+      regionalMastery: {
+        all: { correct: 0, total: 0 },
+        kanto: { correct: 0, total: 0 },
+        johto: { correct: 0, total: 0 },
+        hoenn: { correct: 0, total: 0 },
+        sinnoh: { correct: 0, total: 0 },
+        unova: { correct: 0, total: 0 },
+        kalos: { correct: 0, total: 0 },
+        alola: { correct: 0, total: 0 },
+        galar: { correct: 0, total: 0 },
+        hisui: { correct: 0, total: 0 },
+        paldea: { correct: 0, total: 0 },
+      },
+      achievements: {},
+      trophies: {},
+      dailyStreak: 1,
+      lastLoginDateIST: new Date().toISOString().split('T')[0],
+      claimedDailyStreakDays: [],
+      battleTokens: 250,
+      inventory: {},
+      claimedFreeShopItems: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (database) {
+      await database.collection('trainers').insertOne(newMobileAccount);
+    }
+    inMemoryTrainers.set(syntheticEmail, newMobileAccount);
+    inMemoryTrainers.set(cleanPhone, newMobileAccount);
+    if (newMobileAccount.id) inMemoryTrainers.set(String(newMobileAccount.id), newMobileAccount);
+    persistTrainersToDisk();
+
+    console.log(`📱 New Mobile Trainer registered via Direct Mobile Pass: ${cleanPhone} (${chosenName})`);
+
+    return res.json({
+      success: true,
+      message: `Trainer Pass initialized! Welcome to Pokémon Arena, ${chosenName}!`,
+      account: newMobileAccount,
+      isNewAccount: true,
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error('Error in phone-direct:', errorMsg);
+    return res.status(500).json({ error: 'Failed to process mobile login.' });
   }
 });
 
