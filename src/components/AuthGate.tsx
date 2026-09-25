@@ -52,6 +52,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
   const [successMessage, setSuccessMessage] = useState('');
   const [emailTouched, setEmailTouched] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
+  const [canQuickRegister, setCanQuickRegister] = useState(false);
 
   // Resend Countdown Timer
   useEffect(() => {
@@ -62,9 +63,10 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     return () => clearInterval(interval);
   }, [resendTimer]);
 
-  // Strict email validation helpers
+  // Email or Username validation helpers
   const cleanEmail = email.trim().toLowerCase();
-  const isEmailValid = isValidEmail(cleanEmail);
+  const isInputEmail = cleanEmail.includes('@');
+  const isEmailValid = isInputEmail ? isValidEmail(cleanEmail) : cleanEmail.length >= 3;
   const isEmailEmpty = cleanEmail.length === 0;
   const showEmailError = (emailTouched || cleanEmail.length > 0) && !isEmailValid;
 
@@ -82,7 +84,82 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
   };
 
   // -------------------------------------------------------------
-  // 1. EMAIL SIGNUP: STEP 1 - Request Signup OTP
+  // 1a. INSTANT DIRECT SIGNUP: NO OTP REQUIRED (SAVES TO ATLAS)
+  // -------------------------------------------------------------
+  const handleDirectRegister = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setError('');
+    setSuccessMessage('');
+    setEmailTouched(true);
+
+    if (!cleanEmail) {
+      setError('Email or username is required to register.');
+      sound.playWrong();
+      return;
+    }
+
+    if (isInputEmail) {
+      const validationError = getEmailValidationError(cleanEmail);
+      if (validationError) {
+        setError(validationError);
+        sound.playWrong();
+        return;
+      }
+    } else if (cleanEmail.length < 3) {
+      setError('Username must be at least 3 characters long.');
+      sound.playWrong();
+      return;
+    }
+
+    if (!password || password.length < 4) {
+      setError('Password must be at least 4 characters long.');
+      sound.playWrong();
+      return;
+    }
+
+    setIsLoading(true);
+    sound.playButtonPress();
+
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: isInputEmail ? cleanEmail : `${cleanEmail}@user.pokemonarena.com`,
+          username: isInputEmail ? cleanEmail.split('@')[0] : cleanEmail,
+          password,
+          displayName: displayName.trim() || (isInputEmail ? cleanEmail.split('@')[0] : cleanEmail),
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || 'Failed to create account.');
+        sound.playWrong();
+        setIsLoading(false);
+        return;
+      }
+
+      const newAccount: TrainerAccount = data.account;
+      saveActiveAccount(newAccount);
+      sound.playTrophyUnlock();
+      triggerConfetti();
+      setSuccessMessage(`🎉 Welcome, Trainer ${newAccount.displayName}! Entering Arena...`);
+
+      setTimeout(() => {
+        onAuthenticated(newAccount);
+      }, 700);
+    } catch {
+      setError('Server error during registration. Please try again.');
+      sound.playWrong();
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // 1b. EMAIL SIGNUP: STEP 1 - Request Signup OTP
   // -------------------------------------------------------------
   const handleRequestSignupOtp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -146,7 +223,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
   };
 
   // -------------------------------------------------------------
-  // 1. EMAIL SIGNUP: STEP 2 - Verify OTP & Create Account
+  // 1c. EMAIL SIGNUP: STEP 2 - Verify OTP & Create Account
   // -------------------------------------------------------------
   const handleVerifySignupOtp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -208,17 +285,24 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     if (e) e.preventDefault();
     setError('');
     setSuccessMessage('');
+    setCanQuickRegister(false);
     setEmailTouched(true);
 
     if (!cleanEmail) {
-      setError('Email address is required. Please enter your email to log in.');
+      setError('Email or username is required to log in.');
       sound.playWrong();
       return;
     }
 
-    const validationError = getEmailValidationError(cleanEmail);
-    if (validationError) {
-      setError(validationError);
+    if (isInputEmail) {
+      const validationError = getEmailValidationError(cleanEmail);
+      if (validationError) {
+        setError(validationError);
+        sound.playWrong();
+        return;
+      }
+    } else if (cleanEmail.length < 3) {
+      setError('Username must be at least 3 characters.');
       sound.playWrong();
       return;
     }
@@ -237,7 +321,9 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          identifier: cleanEmail,
           email: cleanEmail,
+          username: cleanEmail,
           password,
         }),
       });
@@ -246,7 +332,8 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
 
       if (!res.ok) {
         if (data.isRegistered === false) {
-          setError('No trainer account found with this email. Please check your email or click Create Account.');
+          setError('No trainer account found with this email or username.');
+          setCanQuickRegister(true);
         } else {
           setError(data.error || 'Failed to sign in. Please verify your password.');
         }
@@ -620,20 +707,48 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                   </div>
                 </div>
 
+                {/* Primary Action: Direct Instant Signup & Enter Arena */}
                 <button
-                  type="submit"
-                  disabled={isLoading || (!isEmailEmpty && !isEmailValid)}
+                  type="button"
+                  id="btn-direct-register"
+                  onClick={() => handleDirectRegister()}
+                  disabled={isLoading || !cleanEmail || !password || password.length < 4}
                   className="w-full py-3 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white font-display font-bold text-sm uppercase tracking-wider shadow-lg shadow-rose-950/50 flex items-center justify-center gap-2 transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 cursor-pointer"
                 >
                   {isLoading ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Creating Trainer Pass...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      <span>Create Account & Enter Arena</span>
+                    </>
+                  )}
+                </button>
+
+                <div className="relative flex py-1 items-center">
+                  <div className="flex-grow border-t border-slate-800"></div>
+                  <span className="flex-shrink mx-3 text-[10px] text-slate-500 uppercase tracking-widest font-bold">Or Email OTP</span>
+                  <div className="flex-grow border-t border-slate-800"></div>
+                </div>
+
+                {/* Secondary Action: Email OTP Verification */}
+                <button
+                  type="submit"
+                  disabled={isLoading || (!isEmailEmpty && !isEmailValid)}
+                  className="w-full py-2.5 rounded-xl bg-slate-950 hover:bg-slate-850 border border-slate-700 hover:border-rose-500/50 text-slate-300 font-semibold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {isLoading ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                       <span>Sending Email OTP...</span>
                     </>
                   ) : (
                     <>
-                      <Send className="w-4 h-4" />
-                      <span>Send Verification Code (OTP)</span>
+                      <Send className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Send 6-Digit Email Verification Code</span>
                     </>
                   )}
                 </button>
@@ -715,17 +830,17 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="block text-xs font-semibold text-slate-300">
-                      Registered Email Address
+                      Email Address or Username
                     </label>
                     {isEmailValid ? (
                       <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                        Valid format
+                        Valid
                       </span>
                     ) : showEmailError ? (
                       <span className="text-[11px] font-bold text-rose-400 flex items-center gap-1">
                         <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
-                        {isEmailEmpty ? 'Required' : 'Invalid email'}
+                        {isEmailEmpty ? 'Required' : 'Too short / invalid'}
                       </span>
                     ) : null}
                   </div>
@@ -741,14 +856,15 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                     />
                     <input
                       id="input-login-email"
-                      type="email"
+                      type="text"
                       required
-                      placeholder="youremail@example.com"
+                      placeholder="youremail@example.com or username"
                       value={email}
                       onBlur={() => setEmailTouched(true)}
                       onChange={(e) => {
                         setEmail(e.target.value);
                         if (error) setError('');
+                        if (canQuickRegister) setCanQuickRegister(false);
                       }}
                       className="w-full pl-9 pr-9 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
                     />
@@ -790,10 +906,31 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                   </div>
                 </div>
 
+                {canQuickRegister && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-xl flex flex-col gap-2"
+                  >
+                    <p className="text-xs text-cyan-300 font-semibold">
+                      Account not found in MongoDB Atlas. Create it now and enter Arena?
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => handleDirectRegister()}
+                      disabled={isLoading}
+                      className="w-full py-2 bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white font-bold text-xs rounded-lg shadow flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      <span>Register & Enter Arena Instantly</span>
+                    </button>
+                  </motion.div>
+                )}
+
                 {/* Primary Action: Direct Password Login */}
                 <button
                   type="submit"
-                  disabled={isLoading || (!isEmailEmpty && !isEmailValid) || !password}
+                  disabled={isLoading || !cleanEmail || !password}
                   className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-display font-black text-sm uppercase tracking-wider shadow-lg shadow-cyan-950/50 flex items-center justify-center gap-2 transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 cursor-pointer"
                 >
                   {isLoading ? (
@@ -819,7 +956,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                 <button
                   type="button"
                   onClick={handleRequestLoginOtp}
-                  disabled={isLoading || (!isEmailEmpty && !isEmailValid)}
+                  disabled={isLoading || !isInputEmail || !isEmailValid}
                   className="w-full py-2.5 rounded-xl bg-slate-950 hover:bg-slate-850 border border-slate-700 hover:border-cyan-500/50 text-slate-300 font-semibold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
                 >
                   <Send className="w-3.5 h-3.5 text-cyan-400" />

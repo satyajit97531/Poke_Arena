@@ -113,7 +113,7 @@ export function setActiveAccountId(id: string): void {
 }
 
 export async function syncAccountToMongo(account: TrainerAccount): Promise<boolean> {
-  if (!account.email) return false;
+  if (!account || (!account.id && !account.email && !account.username && !account.phoneNumber)) return false;
   try {
     const res = await fetch('/api/account/sync', {
       method: 'POST',
@@ -138,8 +138,8 @@ export function saveActiveAccount(account: TrainerAccount): void {
   localStorage.setItem(STORAGE_ACTIVE_ID_KEY, account.id);
 
   // Background sync if connected with MongoDB account
-  if (account.email) {
-    syncAccountToMongo(account);
+  if (account.id) {
+    syncAccountToMongo(account).catch(() => {});
   }
 }
 

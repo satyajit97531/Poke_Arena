@@ -108,11 +108,20 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   const [resendTimer, setResendTimer] = useState(0);
 
   // MongoDB connection status
-  const [mongoStatus, setMongoStatus] = useState<{ connected: boolean; checked: boolean; error: string | null }>({
+  const [mongoStatus, setMongoStatus] = useState<{
+    connected: boolean;
+    checked: boolean;
+    error: string | null;
+    database?: string;
+    stats?: { trainers: number } | null;
+    localTrainersCount?: number;
+  }>({
     connected: false,
     checked: false,
     error: null,
   });
+  const [isRetryingMongo, setIsRetryingMongo] = useState(false);
+  const [mongoRetryMessage, setMongoRetryMessage] = useState<string | null>(null);
 
   // Logout confirmation state
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
@@ -129,8 +138,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   }, [activeTab]);
 
   // Check MongoDB connection status when modal opens
-  useEffect(() => {
-    if (!isOpen) return;
+  const refreshMongoHealth = () => {
     fetch('/api/health')
       .then((res) => res.json())
       .then((data) => {
@@ -138,6 +146,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
           connected: !!data.mongodbConnected,
           checked: true,
           error: data.error || null,
+          database: data.database,
+          stats: data.stats || null,
+          localTrainersCount: data.localTrainersCount,
         });
       })
       .catch(() => {
@@ -147,7 +158,43 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
           error: 'Could not reach server',
         });
       });
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    refreshMongoHealth();
   }, [isOpen]);
+
+  const handleRetryMongoConnection = async () => {
+    setIsRetryingMongo(true);
+    setMongoRetryMessage(null);
+    try {
+      const res = await fetch('/api/mongo/test-connection', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setMongoStatus({
+          connected: true,
+          checked: true,
+          error: null,
+          database: data.database,
+        });
+        setMongoRetryMessage(`✅ Connected to database "${data.database}"! Synced ${data.synced?.syncedTrainers || 0} trainers.`);
+        refreshMongoHealth();
+      } else {
+        setMongoStatus((prev) => ({
+          ...prev,
+          connected: false,
+          error: data.error || 'Connection failed',
+          database: data.database,
+        }));
+        setMongoRetryMessage(data.hint || data.error || 'Authentication failed. Please check MongoDB Atlas credentials.');
+      }
+    } catch {
+      setMongoRetryMessage('Could not reach server to test MongoDB connection.');
+    } finally {
+      setIsRetryingMongo(false);
+    }
+  };
 
   // Handle Resend OTP timer
   useEffect(() => {
@@ -329,16 +376,22 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     }
   };
 
-  // Handle Login (Direct email & password verification, NO OTP required)
+  // Handle Login (Direct email or username & password verification)
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
     setAuthSuccess('');
 
     const cleanEmail = authEmail.trim().toLowerCase();
-    const validationError = getEmailValidationError(cleanEmail);
-    if (validationError) {
-      setAuthError(validationError);
+    const isInputEmail = cleanEmail.includes('@');
+    if (isInputEmail) {
+      const validationError = getEmailValidationError(cleanEmail);
+      if (validationError) {
+        setAuthError(validationError);
+        return;
+      }
+    } else if (cleanEmail.length < 3) {
+      setAuthError('Please enter at least 3 characters.');
       return;
     }
 
@@ -355,7 +408,9 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          identifier: cleanEmail,
           email: cleanEmail,
+          username: cleanEmail,
           password: authPassword,
         }),
       });
@@ -363,7 +418,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       const data = await response.json();
 
       if (!response.ok) {
-        setAuthError(data.error || 'Invalid email or password.');
+        setAuthError(data.error || 'Invalid email/username or password.');
         setIsAuthLoading(false);
         return;
       }
@@ -374,6 +429,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
       onAccountUpdated(loggedAcc);
       setEditName(loggedAcc.displayName);
       setEditTitle(loggedAcc.title);
+      fetchMongoStatus();
 
       sound.playCorrect();
       setAuthSuccess(`Welcome back, Trainer ${loggedAcc.displayName}!`);
@@ -413,15 +469,39 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   };
 
   // Switch local device account
-  const handleSwitchAccount = (targetId: string) => {
+  const handleSwitchAccount = async (targetId: string) => {
     sound.playButtonPress();
     const target = allAccounts.find((a) => a.id === targetId);
     if (target) {
-      setActiveAccountId(target.id);
-      onAccountUpdated(target);
-      setEditName(target.displayName);
-      setEditTitle(target.title);
+      const nowIso = new Date().toISOString();
+      const updatedTarget: TrainerAccount = {
+        ...target,
+        lastLoginAt: nowIso,
+        loginCount: (target.loginCount || 1) + 1,
+        updatedAt: nowIso,
+      };
+      saveActiveAccount(updatedTarget);
+      onAccountUpdated(updatedTarget);
+      setEditName(updatedTarget.displayName);
+      setEditTitle(updatedTarget.title);
       setActiveTab('profile');
+
+      // Update login record in MongoDB Atlas and sync progress
+      try {
+        await fetch('/api/auth/record-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: updatedTarget.id,
+            email: updatedTarget.email,
+            username: updatedTarget.username,
+          }),
+        });
+        await syncAccountToMongo(updatedTarget);
+        fetchMongoStatus();
+      } catch (err) {
+        console.warn('Switch account sync warning:', err);
+      }
     }
   };
 
@@ -826,22 +906,59 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                             <span className="text-slate-400 font-mono text-[10px] ml-1.5">({account.email})</span>
                           )}
                         </p>
-                        <div className="flex items-center gap-1.5 mt-1">
+                        {account.lastLoginAt && (
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            Last Login: <span className="text-slate-300 font-mono">{new Date(account.lastLoginAt).toLocaleString()}</span>
+                          </p>
+                        )}
+                        <div className="flex flex-wrap items-center gap-2 mt-1.5">
                           {mongoStatus.connected ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                              MongoDB Atlas Synced
-                            </span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-md border border-emerald-500/20">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                MongoDB: {mongoStatus.database || 'Atlas'} ({mongoStatus.stats?.trainers ?? 0} trainers registered)
+                              </span>
+                              <button
+                                type="button"
+                                onClick={handleManualSync}
+                                disabled={isAuthLoading}
+                                className="inline-flex items-center gap-1 text-[10px] font-bold text-cyan-300 bg-cyan-500/15 hover:bg-cyan-500/25 px-2 py-1 rounded border border-cyan-500/30 transition-colors cursor-pointer"
+                              >
+                                <RefreshCw className={`w-3 h-3 ${isAuthLoading ? 'animate-spin' : ''}`} />
+                                <span>Sync with MongoDB</span>
+                              </button>
+                            </div>
                           ) : (
-                            <span
-                              title={mongoStatus.error || 'Running in local storage & memory mode. Add 0.0.0.0/0 to Atlas Network Access for cloud sync.'}
-                              className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-300/90 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20 cursor-help"
-                            >
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                              Local & In-Memory Mode
-                            </span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                title={mongoStatus.error || 'Running in local storage & memory mode.'}
+                                className="inline-flex items-center gap-1.5 text-[10px] font-medium text-amber-300/90 bg-amber-500/10 px-2.5 py-1 rounded-md border border-amber-500/20"
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                                Local Storage Mode ({mongoStatus.localTrainersCount ?? 1} local accounts)
+                              </span>
+                              <button
+                                type="button"
+                                onClick={handleRetryMongoConnection}
+                                disabled={isRetryingMongo}
+                                className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-300 bg-indigo-500/15 hover:bg-indigo-500/25 px-2 py-1 rounded border border-indigo-500/30 transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                <RefreshCw className={`w-3 h-3 ${isRetryingMongo ? 'animate-spin' : ''}`} />
+                                <span>{isRetryingMongo ? 'Testing...' : 'Test & Sync MongoDB'}</span>
+                              </button>
+                            </div>
                           )}
                         </div>
+                        {mongoRetryMessage && (
+                          <p className="text-[10px] mt-1.5 text-slate-300 bg-slate-900/80 p-2 rounded border border-slate-700/60 leading-relaxed font-mono">
+                            {mongoRetryMessage}
+                          </p>
+                        )}
+                        {!mongoStatus.connected && mongoStatus.error && !mongoRetryMessage && (
+                          <div className="mt-1.5 text-[10px] text-amber-200/90 bg-amber-950/30 border border-amber-500/30 rounded p-1.5">
+                            <span className="font-semibold text-amber-300">Notice:</span> {mongoStatus.error}
+                          </div>
+                        )}
                       </div>
                       <button
                         id="btn-logout-trainer"

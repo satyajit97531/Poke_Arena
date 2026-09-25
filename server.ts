@@ -6,7 +6,7 @@ import { MongoClient, Db } from 'mongodb';
 import nodemailer from 'nodemailer';
 import { createServer as createViteServer } from 'vite';
 
-dotenv.config();
+dotenv.config({ override: true });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.warn('Unhandled Rejection at:', promise, 'reason:', reason);
@@ -21,7 +21,7 @@ const PORT = 3000;
 
 app.use(express.json());
 
-// Check if user has configured MONGODB_URI via environment secrets
+// Check if user has configured MONGODB_URI via environment secrets or .env
 function getMongoUri(): string | null {
   const raw = process.env.MONGODB_URI;
   if (!raw || typeof raw !== 'string') return null;
@@ -35,21 +35,36 @@ function getMongoUri(): string | null {
   return clean.startsWith('mongodb://') || clean.startsWith('mongodb+srv://') ? clean : null;
 }
 
+// Extract database name from connection string or fallback to environment / default
+function getTargetDbName(activeUri: string): string {
+  try {
+    const parsed = new URL(activeUri.replace(/^mongodb(?:\+srv)?:\/\//i, 'http://'));
+    const pathDb = parsed.pathname.replace(/^\//, '').split('?')[0].trim();
+    if (pathDb && pathDb !== 'admin' && pathDb !== 'test') {
+      return pathDb;
+    }
+  } catch {}
+  return process.env.MONGODB_DB_NAME || 'Pokemon_Arena';
+}
+
 let mongoClient: MongoClient | null = null;
 let db: Db | null = null;
 let mongoConnected = false;
 let lastConnectAttemptTime = 0;
 let connectPromise: Promise<Db | null> | null = null;
 let loggedStorageNotice = false;
-const RECONNECT_COOLDOWN_MS = 60000; // 60s cooldown between connection retries when unreachable
+let lastMongoError: string | null = null;
+let targetDatabaseName = 'Pokemon_Arena';
+const RECONNECT_COOLDOWN_MS = 30000; // 30s cooldown between automatic retries
 
-// Attempt connection to MongoDB Atlas with low timeout to avoid freezing requests
+// Attempt connection to MongoDB Atlas
 async function attemptConnect(): Promise<Db | null> {
   const activeUri = getMongoUri();
   if (!activeUri) {
     mongoConnected = false;
     mongoClient = null;
     db = null;
+    lastMongoError = 'No MONGODB_URI configured. Set MONGODB_URI in environment variables or .env file.';
     if (!loggedStorageNotice) {
       loggedStorageNotice = true;
       console.log('⚡ Pokémon Arena: Running on high-performance Local & Persistent Storage engine.');
@@ -57,35 +72,65 @@ async function attemptConnect(): Promise<Db | null> {
     return null;
   }
 
+  targetDatabaseName = getTargetDbName(activeUri);
+
   try {
     if (!mongoClient) {
       mongoClient = new MongoClient(activeUri, {
-        connectTimeoutMS: 3000,
-        serverSelectionTimeoutMS: 3000,
+        connectTimeoutMS: 5000,
+        serverSelectionTimeoutMS: 5000,
       });
     }
     await mongoClient.connect();
-    db = mongoClient.db('Pokemon_Arena');
+    db = mongoClient.db(targetDatabaseName);
     mongoConnected = true;
-    console.log('✅ Connected to MongoDB Atlas Database: Pokemon_Arena');
+    lastMongoError = null;
+    console.log(`✅ Connected to MongoDB Atlas Database: "${targetDatabaseName}"`);
 
-    // Create unique index on email and username
+    // Ensure trainers collection and indexes exist (only trainers collection in MongoDB)
     try {
-      await db.collection('trainers').createIndex({ email: 1 }, { unique: true });
-      await db.collection('trainers').createIndex({ username: 1 }, { unique: true });
+      await db.collection('trainers').createIndex({ email: 1 }, { unique: true, sparse: true });
+      await db.collection('trainers').createIndex({ username: 1 }, { unique: true, sparse: true });
+      await db.collection('trainers').createIndex({ trophyPoints: -1, totalScore: -1 });
+
+      // Automatically drop obsolete leaderboards and high_scores collections if present
+      const collections = await db.listCollections().toArray();
+      for (const col of collections) {
+        if (col.name === 'leaderboards' || col.name === 'leaderboard' || col.name === 'high_scores' || col.name === 'high_score' || col.name === 'high_scire') {
+          await db.collection(col.name).drop().catch(() => {});
+          console.log(`🗑️ Dropped obsolete collection from MongoDB Atlas: "${col.name}"`);
+        }
+      }
     } catch {
       // index might already exist
     }
 
+    // Auto-sync any accounts or highscores created locally while offline
+    syncLocalDataToMongo(db).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('⚠️ Auto-sync to MongoDB encountered a non-fatal issue:', msg);
+    });
+
     return db;
-  } catch {
+  } catch (err: unknown) {
     mongoConnected = false;
     mongoClient = null;
     db = null;
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    lastMongoError = errorMsg;
+
+    if (errorMsg.includes('authentication failed')) {
+      console.error(`❌ [MongoDB Atlas Auth Error] Authentication failed for target database "${targetDatabaseName}".`);
+      console.error(`   Atlas error: bad auth : authentication failed.`);
+      console.error(`   Please check MongoDB Atlas > Security > Database Access to verify or reset the user password for user.`);
+      console.error(`   Ensure the database user has "Read and write to any database" privileges in MongoDB Atlas.`);
+    } else {
+      console.error(`❌ [MongoDB Connection Error]: ${errorMsg}`);
+    }
 
     if (!loggedStorageNotice) {
       loggedStorageNotice = true;
-      console.log('⚡ Pokémon Arena: Running on high-performance Local & Persistent Storage engine.');
+      console.log('⚡ Pokémon Arena: Fallback active - Running on high-performance Local & Persistent Storage engine.');
     }
     return null;
   }
@@ -381,6 +426,87 @@ const FAKE_BOT_IDS = new Set([
   'acc_misty', 'acc_steven', 'acc_leon', 'acc_lance', '1', '2', '3', '4', '5', '6'
 ]);
 
+// Update trainer login record in MongoDB Atlas and local cache
+async function updateTrainerLoginRecord(database: Db | null, trainer: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const loginTimestamp = new Date().toISOString();
+  const todayIST = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().split('T')[0];
+  const currentCount = Number(trainer.loginCount) || 0;
+  const loginCount = currentCount + 1;
+
+  const updateFields: Record<string, unknown> = {
+    lastLoginAt: loginTimestamp,
+    lastLoginDateIST: todayIST,
+    updatedAt: loginTimestamp,
+    loginCount,
+    isOnline: true,
+  };
+
+  if (database) {
+    try {
+      const matchConditions: Record<string, unknown>[] = [];
+      if (trainer._id) matchConditions.push({ _id: trainer._id });
+      if (trainer.id) matchConditions.push({ id: trainer.id });
+      if (trainer.email) matchConditions.push({ email: String(trainer.email).trim().toLowerCase() });
+      if (trainer.username) matchConditions.push({ username: String(trainer.username).trim().toLowerCase() });
+
+      const query = matchConditions.length > 0 ? { $or: matchConditions } : { id: trainer.id };
+      await database.collection('trainers').updateOne(
+        query,
+        { $set: updateFields }
+      );
+      console.log(`✅ [LOGIN DB UPDATED] Trainer "${trainer.displayName}" (${trainer.email || trainer.username}) recorded in MongoDB Atlas at ${loginTimestamp} (login #${loginCount})`);
+    } catch (dbErr) {
+      console.warn('⚠️ Failed to update login record in MongoDB Atlas:', dbErr);
+    }
+  }
+
+  // Update in-memory trainer object and disk
+  Object.assign(trainer, updateFields);
+  if (trainer.id) inMemoryTrainers.set(String(trainer.id), trainer);
+  if (trainer.email) inMemoryTrainers.set(String(trainer.email).toLowerCase(), trainer);
+  if (trainer.username) inMemoryTrainers.set(String(trainer.username).toLowerCase(), trainer);
+  persistTrainersToDisk();
+
+  return trainer;
+}
+
+// Auto-sync all real trainer accounts to MongoDB Atlas trainers collection (NO dummy or mock bot data)
+async function syncLocalDataToMongo(database: Db): Promise<{ syncedTrainers: number }> {
+  let syncedTrainers = 0;
+
+  try {
+    const seenTrainerIds = new Set<string>();
+
+    // 1. Sync real trainers from inMemoryTrainers into trainers collection
+    for (const t of inMemoryTrainers.values()) {
+      if (!t || !t.id) continue;
+      const tid = String(t.id);
+      if (seenTrainerIds.has(tid)) continue;
+      seenTrainerIds.add(tid);
+
+      // Strictly exclude fake bots and test seeds - DO NOT add dummy data
+      if (FAKE_BOT_IDS.has(tid) || t.isBot || t.isSeed) continue;
+
+      await database.collection('trainers').updateOne(
+        { id: tid },
+        { $set: t },
+        { upsert: true }
+      );
+
+      syncedTrainers++;
+    }
+
+    if (syncedTrainers > 0) {
+      console.log(`✨ Synced ${syncedTrainers} real trainers to MongoDB Atlas trainers collection ("${targetDatabaseName}").`);
+    }
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.warn('⚠️ syncLocalDataToMongo encountered error:', errorMsg);
+  }
+
+  return { syncedTrainers };
+}
+
 function findTrainerInMemory(query: string): Record<string, unknown> | null {
   const clean = query.trim().replace(/^@/, '');
   const norm = clean.toLowerCase().replace(/[\s_-]/g, '');
@@ -479,12 +605,88 @@ function isValidEmail(email: string): boolean {
 // 1. Health & Status
 app.get('/api/health', async (req, res) => {
   const database = await getDb();
+  let stats: any = null;
+
+  if (database && mongoConnected) {
+    try {
+      const trainersCount = await database.collection('trainers').countDocuments({ isBot: { $ne: true }, isSeed: { $ne: true } });
+      stats = {
+        trainers: trainersCount,
+      };
+    } catch {}
+  }
+
   res.json({
     status: 'ok',
     mode: database && mongoConnected ? 'mongodb' : 'persistent_storage',
     mongodbConnected: !!database && mongoConnected,
-    database: 'Pokemon_Arena',
+    database: targetDatabaseName || 'Pokemon_Arena',
+    error: lastMongoError,
+    stats,
+    localTrainersCount: inMemoryTrainers.size,
+    localHighScoresCount: inMemoryHighScores.length,
   });
+});
+
+// Test / retry MongoDB connection immediately and trigger automatic sync
+app.post('/api/mongo/test-connection', async (req, res) => {
+  try {
+    lastConnectAttemptTime = 0;
+    if (mongoClient) {
+      try { await mongoClient.close(); } catch {}
+      mongoClient = null;
+    }
+    db = null;
+    mongoConnected = false;
+
+    const database = await attemptConnect();
+    if (database) {
+      const syncResult = await syncLocalDataToMongo(database);
+      return res.json({
+        success: true,
+        mongodbConnected: true,
+        database: targetDatabaseName,
+        message: `Successfully connected to MongoDB Atlas database "${targetDatabaseName}"!`,
+        synced: syncResult,
+      });
+    } else {
+      return res.status(400).json({
+        success: false,
+        mongodbConnected: false,
+        database: targetDatabaseName,
+        error: lastMongoError || 'Connection failed.',
+        hint: lastMongoError?.includes('authentication failed')
+          ? 'MongoDB Atlas rejected the database user credentials. Go to MongoDB Atlas > Security > Database Access to verify or reset the password for user samantasatyajit503, or check MONGODB_URI in your environment settings.'
+          : 'Check your network connection and ensure 0.0.0.0/0 is whitelisted in Atlas Network Access.',
+      });
+    }
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ error: errorMsg });
+  }
+});
+
+// Force manual sync from local disk/memory to MongoDB
+app.post('/api/mongo/sync', async (req, res) => {
+  try {
+    const database = await getDb();
+    if (!database) {
+      return res.status(400).json({
+        success: false,
+        error: 'MongoDB is not currently connected. ' + (lastMongoError || ''),
+      });
+    }
+    const result = await syncLocalDataToMongo(database);
+    return res.json({
+      success: true,
+      database: targetDatabaseName,
+      message: `Synced ${result.syncedTrainers} trainers to MongoDB database "${targetDatabaseName}".`,
+      ...result,
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ error: errorMsg });
+  }
 });
 
 // 2. Send Signup OTP (FIRST TIME SIGNUP ONLY)
@@ -634,11 +836,16 @@ app.post('/api/auth/verify-signup-otp', async (req, res) => {
       achievements: {},
       trophies: {},
       createdAt: new Date().toISOString(),
+      lastLoginAt: new Date().toISOString(),
+      lastLoginDateIST: new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().split('T')[0],
+      loginCount: 1,
+      isOnline: true,
+      updatedAt: new Date().toISOString(),
     };
 
     if (database) {
       await database.collection('trainers').insertOne(newAccount);
-      console.log(`✅ Saved new Trainer account: ${normalizedEmail} (${cleanName})`);
+      console.log(`✅ Saved new Trainer account to MongoDB Atlas: ${normalizedEmail} (${cleanName})`);
     }
     inMemoryTrainers.set(normalizedEmail, newAccount);
     if (newAccount.username) inMemoryTrainers.set(String(newAccount.username).toLowerCase(), newAccount);
@@ -759,11 +966,16 @@ app.post('/api/auth/register', async (req, res) => {
       achievements: {},
       trophies: {},
       createdAt: new Date().toISOString(),
+      lastLoginAt: new Date().toISOString(),
+      lastLoginDateIST: new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().split('T')[0],
+      loginCount: 1,
+      isOnline: true,
+      updatedAt: new Date().toISOString(),
     };
 
     if (database) {
       await database.collection('trainers').insertOne(newAccount);
-      console.log(`✅ [DIRECT REGISTER] Saved new Trainer: ${normalizedEmail} (${cleanName})`);
+      console.log(`✅ [DIRECT REGISTER] Saved new Trainer to MongoDB Atlas: ${normalizedEmail} (${cleanName})`);
     }
     inMemoryTrainers.set(normalizedEmail, newAccount);
     if (newAccount.username) inMemoryTrainers.set(String(newAccount.username).toLowerCase(), newAccount);
@@ -877,7 +1089,7 @@ app.post('/api/auth/verify-login-otp', async (req, res) => {
     inMemoryOtps.delete(`${normalizedEmail}:login`);
 
     const database = await getDb();
-    let trainer = null;
+    let trainer: any = null;
 
     if (database) {
       trainer = await database.collection('trainers').findOne({ email: normalizedEmail });
@@ -888,6 +1100,9 @@ app.post('/api/auth/verify-login-otp', async (req, res) => {
     if (!trainer) {
       return res.status(404).json({ error: 'Trainer account not found.' });
     }
+
+    // Persist login timestamp & count in MongoDB Atlas
+    await updateTrainerLoginRecord(database, trainer);
 
     const { password: _, ...safeAccount } = trainer;
 
@@ -905,48 +1120,147 @@ app.post('/api/auth/verify-login-otp', async (req, res) => {
   }
 });
 
-// 4c. Direct Login Fallback (optional direct credential route)
+// 4c. Direct Login Fallback (Supports Email, Username, or Mobile + Records Login to MongoDB)
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, username, identifier, password, autoRegister, displayName } = req.body;
+    const rawLookup = String(identifier || email || username || '').trim();
 
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required.' });
+    if (!rawLookup || !password) {
+      return res.status(400).json({ error: 'Email / Username and password are required.' });
     }
 
-    const normalizedEmail = String(email).trim().toLowerCase();
-
-    // Validate email format
-    if (!isValidEmail(normalizedEmail)) {
-      return res.status(400).json({ error: 'Please enter a valid email address.' });
-    }
-
+    const normalizedLookup = rawLookup.toLowerCase();
     const database = await getDb();
-    let trainer = null;
+    let trainer: any = null;
 
     if (database) {
-      trainer = await database.collection('trainers').findOne({ email: normalizedEmail });
-    } else {
-      trainer = inMemoryTrainers.get(normalizedEmail) || null;
+      const matchQueries: Record<string, unknown>[] = [
+        { email: normalizedLookup },
+        { username: normalizedLookup },
+        { username: { $regex: new RegExp(`^${normalizedLookup}$`, 'i') } },
+      ];
+      const cleanPhone = cleanPhoneNumber(rawLookup);
+      if (cleanPhone && cleanPhone.length >= 8) {
+        matchQueries.push({ phoneNumber: cleanPhone });
+        matchQueries.push({ email: `${cleanPhone.replace('+', 'p')}@mobile.pokemonarena.com` });
+      }
+      trainer = await database.collection('trainers').findOne({ $or: matchQueries });
+    }
+
+    // Check in-memory fallback
+    if (!trainer) {
+      trainer = inMemoryTrainers.get(normalizedLookup) || inMemoryTrainers.get(rawLookup) || null;
+      if (!trainer) {
+        for (const t of inMemoryTrainers.values()) {
+          const u = String(t.username || '').toLowerCase();
+          const e = String(t.email || '').toLowerCase();
+          if (u === normalizedLookup || e === normalizedLookup) {
+            trainer = t;
+            break;
+          }
+        }
+      }
+      // If found in local cache but not in database, sync to database immediately
+      if (trainer && database) {
+        await database.collection('trainers').updateOne({ id: trainer.id }, { $set: trainer }, { upsert: true });
+      }
     }
 
     if (!trainer) {
+      // If autoRegister is requested, create the account directly in MongoDB Atlas
+      if (autoRegister || req.body.createIfNotFound) {
+        const cleanName = (displayName && String(displayName).trim()) || normalizedLookup.split('@')[0];
+        const newUsername = normalizedLookup.includes('@') ? normalizedLookup.split('@')[0] : normalizedLookup;
+        const nowIso = new Date().toISOString();
+        const newAccount = {
+          id: `trainer_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+          email: normalizedLookup.includes('@') ? normalizedLookup : `${normalizedLookup}@user.pokemonarena.com`,
+          username: newUsername,
+          displayName: cleanName,
+          password: String(password),
+          avatarId: 25,
+          title: 'Rookie Trainer',
+          level: 1,
+          exp: 0,
+          trophyPoints: 0,
+          unlockedAvatars: [25, 1, 4, 7],
+          unlockedSongIds: ['pallet_town'],
+          activeSongId: 'pallet_town',
+          totalGames: 0,
+          totalWins: 0,
+          totalCorrect: 0,
+          totalGuesses: 0,
+          bestStreak: 0,
+          totalScore: 0,
+          highScores: {},
+          regionalMastery: {
+            all: { correct: 0, total: 0 },
+            kanto: { correct: 0, total: 0 },
+            johto: { correct: 0, total: 0 },
+            hoenn: { correct: 0, total: 0 },
+            sinnoh: { correct: 0, total: 0 },
+            unova: { correct: 0, total: 0 },
+            kalos: { correct: 0, total: 0 },
+            alola: { correct: 0, total: 0 },
+            galar: { correct: 0, total: 0 },
+            hisui: { correct: 0, total: 0 },
+            paldea: { correct: 0, total: 0 },
+          },
+          achievements: {},
+          trophies: {},
+          createdAt: nowIso,
+          lastLoginAt: nowIso,
+          loginCount: 1,
+          updatedAt: nowIso,
+        };
+
+        if (database) {
+          await database.collection('trainers').insertOne(newAccount);
+        }
+        inMemoryTrainers.set(newAccount.email, newAccount);
+        inMemoryTrainers.set(newAccount.username, newAccount);
+        inMemoryTrainers.set(newAccount.id, newAccount);
+        persistTrainersToDisk();
+
+        const { password: _, ...safeAccount } = newAccount;
+        console.log(`✅ [AUTO-REGISTER LOGIN] New Trainer "${cleanName}" (${newAccount.email}) created in MongoDB Atlas.`);
+        return res.json({
+          success: true,
+          message: `Trainer Pass created for ${cleanName}! Welcome to Pokémon Arena.`,
+          account: safeAccount,
+          isNewAccount: true,
+        });
+      }
+
       return res.status(404).json({
-        error: 'No trainer account found with this email. Please sign up first.',
+        error: 'No trainer account found with this email or username.',
         isRegistered: false,
+        canQuickRegister: true,
       });
     }
 
-    // Validate password
-    if (trainer.password !== String(password)) {
+    // If trainer has no password set yet (e.g. from initial OTP signup), set password on first login
+    if (!trainer.password && password) {
+      trainer.password = String(password);
+      if (database) {
+        await database.collection('trainers').updateOne(
+          { id: trainer.id },
+          { $set: { password: String(password) } }
+        );
+      }
+    } else if (trainer.password && trainer.password !== String(password)) {
       return res.status(401).json({
         error: 'Incorrect password. Please verify and try again.',
       });
     }
 
+    // Update login timestamp & count in MongoDB Atlas
+    await updateTrainerLoginRecord(database, trainer);
+
     const { password: _, ...safeAccount } = trainer;
 
-    console.log(`🔓 Trainer logged in: ${normalizedEmail}`);
+    console.log(`🔓 Trainer logged in: ${trainer.email || trainer.username} (${trainer.displayName})`);
 
     return res.json({
       success: true,
@@ -957,6 +1271,50 @@ app.post('/api/auth/login', async (req, res) => {
     const errorMsg = err instanceof Error ? err.message : String(err);
     console.error('Error in login:', errorMsg);
     return res.status(500).json({ error: 'Login failed. Please try again.' });
+  }
+});
+
+// 4c. Update Login Record in MongoDB Atlas & Cache (Called on account switch or device activation)
+app.post('/api/auth/record-login', async (req, res) => {
+  try {
+    const { id, email, username } = req.body;
+    const database = await getDb();
+    let trainer: any = null;
+
+    if (database) {
+      const matchConditions: Record<string, unknown>[] = [];
+      if (id) matchConditions.push({ id });
+      if (email) matchConditions.push({ email: String(email).trim().toLowerCase() });
+      if (username) matchConditions.push({ username: String(username).trim().toLowerCase() });
+
+      if (matchConditions.length > 0) {
+        trainer = await database.collection('trainers').findOne({ $or: matchConditions });
+      }
+    }
+
+    if (!trainer) {
+      if (id && inMemoryTrainers.has(String(id))) trainer = inMemoryTrainers.get(String(id));
+      else if (email && inMemoryTrainers.has(String(email).trim().toLowerCase())) trainer = inMemoryTrainers.get(String(email).trim().toLowerCase());
+      else if (username && inMemoryTrainers.has(String(username).trim().toLowerCase())) trainer = inMemoryTrainers.get(String(username).trim().toLowerCase());
+    }
+
+    if (trainer) {
+      await updateTrainerLoginRecord(database, trainer);
+      const { password: _, ...safe } = trainer;
+      return res.json({
+        success: true,
+        message: `Login timestamp recorded in MongoDB Atlas for ${trainer.displayName}.`,
+        account: safe,
+        lastLoginAt: trainer.lastLoginAt,
+        loginCount: trainer.loginCount,
+      });
+    }
+
+    return res.status(404).json({ error: 'Trainer account not found.' });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error('Error in record-login:', errorMsg);
+    return res.status(500).json({ error: errorMsg });
   }
 });
 
@@ -1145,6 +1503,7 @@ app.post('/api/auth/phone-direct', async (req, res) => {
     }
 
     if (existingTrainer) {
+      await updateTrainerLoginRecord(database, existingTrainer);
       const { password: _, ...safeAccount } = existingTrainer;
       console.log(`📱 Trainer logged in via Direct Mobile Pass: ${cleanPhone}`);
       return res.json({
@@ -1275,6 +1634,7 @@ app.post('/api/auth/verify-phone-otp', async (req, res) => {
     }
 
     if (existingTrainer) {
+      await updateTrainerLoginRecord(database, existingTrainer);
       const { password: _, ...safeAccount } = existingTrainer;
       console.log(`📱 Trainer logged in via SMS OTP: ${cleanPhone}`);
       return res.json({
@@ -1404,6 +1764,9 @@ app.post('/api/account/sync', async (req, res) => {
       claimedFreeShopItems: account.claimedFreeShopItems,
       claimedDailyStreakDays: account.claimedDailyStreakDays,
       updatedAt: new Date().toISOString(),
+      ...(account.lastLoginAt ? { lastLoginAt: account.lastLoginAt } : {}),
+      ...(account.lastLoginDateIST ? { lastLoginDateIST: account.lastLoginDateIST } : {}),
+      ...(account.loginCount ? { loginCount: account.loginCount } : {}),
     };
 
     if (database) {
@@ -1418,10 +1781,25 @@ app.post('/api/account/sync', async (req, res) => {
         matchQuery.id = account.id;
       }
 
+      const docUsername = account.username || (account.displayName ? String(account.displayName).toLowerCase().replace(/\s+/g, '_') : `trainer_${account.id}`);
+
       await database.collection('trainers').updateOne(
         matchQuery,
-        { $set: updateFields },
-        { upsert: false }
+        {
+          $set: updateFields,
+          $setOnInsert: {
+            id: account.id,
+            email: normalizedEmail || account.email,
+            username: docUsername,
+            createdAt: account.createdAt || new Date().toISOString(),
+            lastLoginAt: account.lastLoginAt || new Date().toISOString(),
+            lastLoginDateIST: new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().split('T')[0],
+            loginCount: Number(account.loginCount) || 1,
+            isOnline: true,
+            ...(account.password ? { password: account.password } : {}),
+          },
+        },
+        { upsert: true }
       );
     }
 
@@ -1540,6 +1918,7 @@ app.get('/api/leaderboard', async (req, res) => {
         isSeed: { $ne: true },
       };
 
+      // Fetch solely from trainers collection in MongoDB Atlas
       const trainers = await database
         .collection('trainers')
         .find(
@@ -1694,9 +2073,9 @@ app.post('/api/highscores', async (req, res) => {
 
     const cleanName = String(playerName).trim();
     const cleanLower = cleanName.toLowerCase();
-    // Block any bot seed names
-    if (FAKE_BOT_NAMES.has(cleanLower) || FAKE_BOT_USERNAMES.has(cleanLower)) {
-      return res.status(400).json({ error: 'Bot names cannot be registered.' });
+    // Block only if explicitly marked as bot
+    if (req.body.isBot || req.body.isSeed) {
+      return res.status(400).json({ error: 'Bot scores cannot be registered.' });
     }
 
     const newRecord = {
@@ -1714,7 +2093,33 @@ app.post('/api/highscores', async (req, res) => {
 
     const database = await getDb();
     if (database) {
-      await database.collection('high_scores').insertOne(newRecord);
+      const scoreNum = Number(score) || 0;
+      const streakNum = Number(streak) || 0;
+      const trainerMatches: Record<string, unknown>[] = [];
+      if (email) trainerMatches.push({ email: String(email).trim().toLowerCase() });
+      if (cleanName) {
+        trainerMatches.push({ username: cleanName.toLowerCase() });
+        trainerMatches.push({ displayName: cleanName });
+      }
+
+      if (trainerMatches.length > 0) {
+        await database.collection('trainers').updateOne(
+          { $or: trainerMatches },
+          {
+            $max: {
+              [`highScores.${mode || 'classic'}`]: scoreNum,
+              bestStreak: streakNum,
+            },
+            $inc: {
+              totalScore: scoreNum,
+              totalGames: 1,
+            },
+            $set: {
+              updatedAt: new Date().toISOString(),
+            },
+          }
+        ).catch(() => {});
+      }
     }
     inMemoryHighScores.push(newRecord);
     persistHighScoresToDisk();
@@ -1732,16 +2137,7 @@ app.get('/api/highscores', async (req, res) => {
     let records: any[] = [];
 
     if (database) {
-      records = await database
-        .collection('high_scores')
-        .find({
-          id: { $nin: Array.from(FAKE_BOT_IDS) },
-        })
-        .sort({ score: -1 })
-        .limit(100)
-        .toArray();
-
-      // Also integrate scores from active registered trainers who have actually played
+      // Derive all high scores directly from real trainers in trainers collection
       const activeTrainers = await database
         .collection('trainers')
         .find(
@@ -1757,6 +2153,8 @@ app.get('/api/highscores', async (req, res) => {
           },
           { projection: { password: 0 } }
         )
+        .sort({ totalScore: -1, trophyPoints: -1 })
+        .limit(100)
         .toArray();
 
       for (const t of activeTrainers) {

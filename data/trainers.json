@@ -78,32 +78,24 @@
     "createdAt": "2026-09-23T17:32:19.710Z"
   },
   {
+    "_id": "6ab60051ca03da2cc2e5db99",
     "id": "trainer_1790184853622_de7b1x",
-    "email": "samantasatyajit503@gmail.com",
-    "username": "samantasatyajit503",
-    "displayName": "Satyajit",
-    "avatarId": 25,
-    "title": "Rookie Trainer",
-    "level": 1,
-    "exp": 0,
-    "trophyPoints": 0,
-    "unlockedAvatars": [
-      25,
-      1,
-      4,
-      7
-    ],
-    "unlockedSongIds": [
-      "pallet_town"
-    ],
+    "achievements": {},
     "activeSongId": "pallet_town",
-    "totalGames": 0,
-    "totalWins": 0,
-    "totalCorrect": 0,
-    "totalGuesses": 0,
+    "avatarId": 25,
+    "battleTokens": 250,
     "bestStreak": 0,
-    "totalScore": 0,
+    "claimedDailyStreakDays": [],
+    "createdAt": "2026-09-23T17:34:13.622Z",
+    "dailyStreak": 3,
+    "displayName": "Satyajit",
+    "email": "samantasatyajit503@gmail.com",
+    "exp": 0,
+    "flexItems": [],
     "highScores": {},
+    "inventory": {},
+    "lastLoginDateIST": "2026-09-25",
+    "level": 1,
     "regionalMastery": {
       "all": {
         "correct": 0,
@@ -150,19 +142,31 @@
         "total": 0
       }
     },
-    "achievements": {},
+    "title": "Rookie Trainer",
+    "totalCorrect": 0,
+    "totalGames": 0,
+    "totalGuesses": 0,
+    "totalScore": 0,
+    "totalWins": 0,
     "trophies": {},
-    "createdAt": "2026-09-23T17:34:13.622Z",
-    "dailyStreak": 2,
-    "battleTokens": 250,
-    "inventory": {},
-    "flexItems": [],
-    "claimedDailyStreakDays": [],
+    "trophyPoints": 0,
+    "unlockedAvatars": [
+      25,
+      1,
+      4,
+      7
+    ],
+    "unlockedSongIds": [
+      "pallet_town"
+    ],
     "unlockedTrainerAvatars": [
       "red"
     ],
-    "lastLoginDateIST": "2026-09-24",
-    "updatedAt": "2026-09-24T06:38:13.667Z"
+    "updatedAt": "2026-09-25T05:24:15.923Z",
+    "username": "samantasatyajit503",
+    "lastLoginAt": "2026-09-25T05:24:15.923Z",
+    "loginCount": 1,
+    "isOnline": true
   },
   {
     "id": "trainer_1790232472611_824s5j",
@@ -345,5 +349,176 @@
     "claimedFreeShopItems": {},
     "createdAt": "2026-09-24T06:47:52.619Z",
     "updatedAt": "2026-09-24T06:47:52.619Z"
+  },
+  {
+    "id": "trainer_1790235521117_c4hdrn",
+    "phoneNumber": "+911234567890",
+    "email": "p911234567890@mobile.pokemonarena.com",
+    "username": "trainer_34567890",
+    "pin": "1234",
+    "displayName": "faruzan",
+    "avatarId": 25,
+    "trainerAvatarId": "red",
+    "title": "Rookie Pokémon Trainer",
+    "level": 1,
+    "exp": 0,
+    "trophyPoints": 0,
+    "unlockedAvatars": [
+      25,
+      1,
+      4,
+      7
+    ],
+    "unlockedTrainerAvatars": [
+      "red",
+      "pikachu"
+    ],
+    "unlockedSongIds": [
+      "pallet_town"
+    ],
+    "activeSongId": "pallet_town",
+    "totalGames": 0,
+    "totalWins": 0,
+    "totalCorrect": 0,
+    "totalGuesses": 0,
+    "bestStreak": 0,
+    "totalScore": 0,
+    "highScores": {},
+    "regionalMastery": {
+      "all": {
+        "correct": 0,
+        "total": 0
+      },
+      "kanto": {
+        "correct": 0,
+        "total": 0
+      },
+      "johto": {
+        "correct": 0,
+        "total": 0
+      },
+      "hoenn": {
+        "correct": 0,
+        "total": 0
+      },
+      "sinnoh": {
+        "correct": 0,
+        "total": 0
+      },
+      "unova": {
+        "correct": 0,
+        "total": 0
+      },
+      "kalos": {
+        "correct": 0,
+        "total": 0
+      },
+      "alola": {
+        "correct": 0,
+        "total": 0
+      },
+      "galar": {
+        "correct": 0,
+        "total": 0
+      },
+      "hisui": {
+        "correct": 0,
+        "total": 0
+      },
+      "paldea": {
+        "correct": 0,
+        "total": 0
+      }
+    },
+    "achievements": {},
+    "trophies": {},
+    "dailyStreak": 2,
+    "lastLoginDateIST": "2026-09-25",
+    "claimedDailyStreakDays": [],
+    "battleTokens": 250,
+    "inventory": {},
+    "claimedFreeShopItems": {},
+    "createdAt": "2026-09-24T07:38:41.117Z",
+    "updatedAt": "2026-09-25T04:43:05.259Z",
+    "flexItems": []
+  },
+  {
+    "id": "trainer_1790313863250_rpqjmg",
+    "email": "testplayer_omega@example.com",
+    "username": "omega_trainer",
+    "displayName": "Omega Trainer",
+    "password": "mypassword123",
+    "avatarId": 25,
+    "title": "Rookie Trainer",
+    "level": 1,
+    "exp": 0,
+    "trophyPoints": 0,
+    "unlockedAvatars": [
+      25,
+      1,
+      4,
+      7
+    ],
+    "unlockedSongIds": [
+      "pallet_town"
+    ],
+    "activeSongId": "pallet_town",
+    "totalGames": 0,
+    "totalWins": 0,
+    "totalCorrect": 0,
+    "totalGuesses": 0,
+    "bestStreak": 0,
+    "totalScore": 0,
+    "highScores": {},
+    "regionalMastery": {
+      "all": {
+        "correct": 0,
+        "total": 0
+      },
+      "kanto": {
+        "correct": 0,
+        "total": 0
+      },
+      "johto": {
+        "correct": 0,
+        "total": 0
+      },
+      "hoenn": {
+        "correct": 0,
+        "total": 0
+      },
+      "sinnoh": {
+        "correct": 0,
+        "total": 0
+      },
+      "unova": {
+        "correct": 0,
+        "total": 0
+      },
+      "kalos": {
+        "correct": 0,
+        "total": 0
+      },
+      "alola": {
+        "correct": 0,
+        "total": 0
+      },
+      "galar": {
+        "correct": 0,
+        "total": 0
+      },
+      "hisui": {
+        "correct": 0,
+        "total": 0
+      },
+      "paldea": {
+        "correct": 0,
+        "total": 0
+      }
+    },
+    "achievements": {},
+    "trophies": {},
+    "createdAt": "2026-09-25T05:24:23.250Z",
+    "_id": "6ab60587f2ebabf467aa8ae0"
   }
 ]
